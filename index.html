@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terminal de Escaneo de Stock</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Pantalla de login -->
+<div class="login-overlay" id="loginScreen">
+    <div class="login-card">
+        <span class="eyebrow">Control de inventario</span>
+        <h1>Ingresá a tu cuenta</h1>
+        <p class="hint">Cada cliente tiene su propio catálogo e inventario.</p>
+        <form id="loginForm">
+            <div class="field-group">
+                <label class="field-label" for="loginEmail">Email</label>
+                <input type="email" id="loginEmail" class="manual-input" required autocomplete="username">
+            </div>
+            <div class="field-group">
+                <label class="field-label" for="loginPassword">Contraseña</label>
+                <input type="password" id="loginPassword" class="manual-input" required autocomplete="current-password">
+            </div>
+            <p class="login-error" id="loginError">No pudimos iniciar sesión.</p>
+            <button type="submit" class="btn btn--primary btn--full" id="loginSubmitBtn">Ingresar</button>
+        </form>
+    </div>
+</div>
+
+<!-- App -->
+<div class="app is-hidden" id="appRoot">
+
+    <header class="topbar">
+        <div class="brand">
+            <span class="eyebrow">Control de inventario</span>
+            <h1>Terminal de Escaneo</h1>
+        </div>
+        <div class="topbar-right">
+            <div class="status-badge" id="dbStatus">DB vacía · 0 productos</div>
+            <span class="user-chip" id="userChip"></span>
+            <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button">Salir</button>
+        </div>
+    </header>
+
+    <div class="inventory-bar">
+        <div>
+            <div class="inv-name" id="invName">—</div>
+            <div class="inv-state" id="invState">—</div>
+        </div>
+        <button class="btn btn--ghost btn--sm" id="nuevoInventarioBtn" type="button">Nuevo inventario</button>
+    </div>
+
+    <main class="layout">
+
+        <!-- Columna izquierda: acciones -->
+        <section class="col">
+
+            <div class="card">
+                <span class="card__step">01 · Catálogo</span>
+                <h2>Base de datos de productos</h2>
+                <p class="hint">Se sube una sola vez. Los productos nuevos que detectes al escanear se agregan solos.</p>
+
+                <div class="catalog-status" id="catalogStatus" style="display:none;">
+                    <span><strong id="catalogCount">0</strong> productos cargados en tu cuenta</span>
+                    <button type="button" class="link-btn" id="reemplazarCatalogoBtn">Reemplazar</button>
+                </div>
+
+                <div id="catalogUploadPanel">
+                    <input type="file" id="fileInput" accept=".txt" class="file-btn">
+                </div>
+            </div>
+
+            <div class="card">
+                <span class="card__step">02 · Escanear</span>
+                <h2>Código de barras</h2>
+                <p class="hint">Usá la cámara del dispositivo o cargá el código a mano si no se puede leer.</p>
+
+                <div class="tabs">
+                    <div class="tab is-active" id="tabCamera" data-tab="camera">Cámara</div>
+                    <div class="tab" id="tabManual" data-tab="manual">Manual</div>
+                </div>
+
+                <!-- Panel cámara -->
+                <div class="tab-panel" id="panelCamera">
+                    <div class="camera-wrap" id="cameraWrap">
+                        <div id="cameraView"></div>
+                        <p class="camera-placeholder" id="cameraPlaceholder">La cámara está apagada.<br>Tocá &ldquo;Iniciar cámara&rdquo; para escanear.</p>
+                        <div class="scan-overlay">
+                            <div class="scan-frame">
+                                <span class="corner corner--tl"></span>
+                                <span class="corner corner--tr"></span>
+                                <span class="corner corner--bl"></span>
+                                <span class="corner corner--br"></span>
+                                <div class="scan-beam"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="btn-row">
+                        <button id="startCameraBtn" class="btn btn--amber btn--full" disabled>Iniciar cámara</button>
+                        <button id="stopCameraBtn" class="btn btn--ghost btn--full" style="display:none;">Detener cámara</button>
+                    </div>
+                </div>
+
+                <!-- Panel manual -->
+                <div class="tab-panel" id="panelManual" style="display:none;">
+                    <input type="text" id="scannerInput" placeholder="Ingresá o pegá el código y presioná Enter…"
+                        class="manual-input" disabled>
+                </div>
+            </div>
+
+            <div class="card card--export">
+                <span class="card__step">03 · Exportar</span>
+                <h2>Actualizar inventario</h2>
+                <p class="hint">Descargá el .txt con el stock modificado para subir al sistema del mostrador.</p>
+                <button id="downloadBtn" class="btn btn--success btn--full" disabled>Descargar inventario_actualizado.txt</button>
+            </div>
+
+        </section>
+
+        <!-- Columna derecha: registro -->
+        <section class="col">
+            <div class="card log-card">
+                <span class="card__step">Registro</span>
+                <h2>Modificaciones</h2>
+                <div class="log-table-wrap">
+                    <table class="log-table">
+                        <thead>
+                            <tr>
+                                <th>Hora</th>
+                                <th>Artículo</th>
+                                <th class="text-center">Nuevo stock</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scannedTable">
+                            <tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+</div>
+
+<!-- Modal de cantidad (producto conocido) -->
+<div class="modal-overlay" id="qtyModal">
+    <div class="modal">
+        <h3 id="qtyModalProductName">Producto</h3>
+        <p class="modal-code">Código: <span id="qtyModalProductCode">—</span></p>
+        <p class="stock-current">Stock actual: <strong id="qtyModalCurrentStock">0</strong></p>
+
+        <div class="qty-control">
+            <button class="qty-btn" id="qtyMinus" type="button">−</button>
+            <input type="number" id="qtyInput" class="qty-input" value="1">
+            <button class="qty-btn" id="qtyPlus" type="button">+</button>
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn--ghost btn--full" id="qtyCancel">Cancelar</button>
+            <button class="btn btn--primary btn--full" id="qtyConfirm">Confirmar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de producto nuevo (código no encontrado) -->
+<div class="modal-overlay" id="newProductModal">
+    <div class="modal">
+        <h3>Producto no encontrado</h3>
+        <p class="modal-code">Código escaneado: <span id="npCodigo">—</span></p>
+
+        <div class="field-group">
+            <label class="field-label" for="npDescripcion">Descripción</label>
+            <input type="text" id="npDescripcion" class="manual-input" placeholder="Nombre del producto">
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="npUnidades">Unidad</label>
+            <input type="text" id="npUnidades" class="manual-input" value="unidad">
+        </div>
+        <div class="field-group">
+            <label class="field-label" for="npStock">Stock inicial</label>
+            <input type="number" id="npStock" class="manual-input" value="1">
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn--ghost btn--full" id="npCancel" type="button">Cancelar</button>
+            <button class="btn btn--primary btn--full" id="npConfirm" type="button">Agregar producto</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toasts -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
