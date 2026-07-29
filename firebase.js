@@ -76,7 +76,11 @@ async function asegurarUsuarioDoc(user) {
 // de un nombre de campo en un update con dot-notation (ej. "items.S/M").
 // Los reemplazamos por "_" para que el ID/campo generado sea siempre válido.
 function sanitizarCodigo(codigo) {
-    return String(codigo).replace(/[/.\[\]#$*]/g, "_");
+    const limpio = String(codigo ?? "").trim().replace(/[/.\[\]#$*]/g, "_");
+    // Red de seguridad: si igual llega vacío (no debería, app.js ya asigna un
+    // código interno estable), usamos un valor fijo en vez de uno aleatorio,
+    // para que sea el mismo documento siempre y no se generen duplicados.
+    return limpio === "" ? "SINCOD_VACIO" : limpio;
 }
 
 // =========================================================
@@ -126,10 +130,21 @@ export async function crearProducto(uid, producto) {
     }, { merge: true });
 }
 
-export async function actualizarStockProducto(uid, codigo, nuevoStock) {
+export async function actualizarStockProducto(uid, producto) {
     try {
-        const ref = doc(db, "productos", `${uid}_${sanitizarCodigo(codigo)}`);
-        await updateDoc(ref, { stock: nuevoStock, actualizado: serverTimestamp() });
+        const ref = doc(db, "productos", `${uid}_${sanitizarCodigo(producto.codigoArt)}`);
+        // setDoc con merge en vez de updateDoc: si el documento todavía no existe
+        // bajo este ID (por ejemplo, un producto viejo cuyo código cambió al
+        // asignarle uno interno), se crea con TODOS los datos en vez de fallar
+        // o de crear un doc incompleto (sin descripción/unidades).
+        await setDoc(ref, {
+            usuario: uid,
+            codigo: producto.codigoArt,
+            descripcion: producto.articulo,
+            unidades: producto.unidades,
+            stock: producto.stock_unidad,
+            actualizado: serverTimestamp()
+        }, { merge: true });
         return true;
     } catch (e) {
         console.error("❌ Error actualizando stock del producto:", e);
