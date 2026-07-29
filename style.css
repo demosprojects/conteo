@@ -570,6 +570,49 @@ body {
     letter-spacing: .06em;
 }
 
+.inventory-bar .inv-hint {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 6px;
+    max-width: 420px;
+}
+
+/* Filas de la tabla de registro: clicables para editar */
+.log-table tbody tr {
+    cursor: pointer;
+}
+
+.log-table tbody tr.empty-row,
+.log-table tbody tr:has(.empty-row) {
+    cursor: default;
+}
+
+/* Modal: badge de modo (sumar/restar vs editar) */
+.modal-mode-badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--amber-dark);
+    background: var(--amber-soft);
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+}
+
+.modal-mode-badge.is-editing {
+    color: #1c6b2c;
+    background: var(--success-soft);
+}
+
+.qty-mode-hint {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin: -12px 0 20px;
+}
+
 /* Estado del catálogo ya cargado */
 .catalog-status {
     display: flex;
@@ -601,3 +644,160 @@ body {
 ::-webkit-scrollbar-track { background: var(--paper); }
 ::-webkit-scrollbar-thumb { background: #c3c9bd; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #a3ab97; }
+
+/* Historial de conteos (.txt) */
+.historial-filtros {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 4px;
+}
+
+.historial-filtros .field-group { margin-bottom: 0; }
+
+.historial-lista {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.historial-item {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.historial-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+    background: var(--paper);
+}
+
+.historial-item-header:hover { background: var(--amber-soft); }
+
+.historial-item-nombre {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 13.5px;
+    color: var(--ink);
+}
+
+.historial-item-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+}
+
+.historial-item-acciones {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.historial-item-productos {
+    display: none;
+    max-height: 260px;
+    overflow-y: auto;
+    border-top: 1px solid var(--line);
+}
+
+.historial-item.is-open .historial-item-productos { display: block; }
+
+.historial-item-productos table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+
+.historial-item-productos td {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+}
+
+.historial-item-productos tr:last-child td { border-bottom: 0; }
+
+.historial-item-productos .product-code {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+}
+
+.historial-item-productos .stock-cell {
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: var(--amber-dark);
+}
+
+/* Zona de peligro (testing) */
+.card--danger {
+    border-color: var(--danger);
+    background: var(--danger-soft);
+}
+
+.card--danger .card__step { color: var(--danger); }
+
+.btn--danger { background: var(--danger); color: #fff; }
+.btn--danger:hover { background: #b52a2e; }
+
+/* Búsqueda manual por nombre de artículo */
+.buscar-resultados {
+    margin-top: 10px;
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    display: none;
+}
+
+.buscar-resultados.has-items { display: block; }
+
+.buscar-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 11px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--line);
+}
+
+.buscar-item:last-child { border-bottom: 0; }
+.buscar-item:hover { background: var(--amber-soft); }
+
+.buscar-item-nombre {
+    font-size: 13.5px;
+    color: var(--ink);
+}
+
+.buscar-item-codigo {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+}
+
+.buscar-item-stock {
+    flex-shrink: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--amber-dark);
+}
+
+.buscar-sin-resultados {
+    padding: 14px;
+    text-align: center;
+    color: #a8afb6;
+    font-style: italic;
+    font-size: 13.5px;
+}
