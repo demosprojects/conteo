@@ -22,9 +22,49 @@ let pendingProduct = null;
 let pendingScanCode = null;
 let currentUser = null;
 let inventarioActual = null; // { id, nombre, estado, items }
+let catalogoSincronizado = false; // controla si se habilita el botón "Finalizar"
 
 // Solo los productos que se modificaron en el conteo actual (para exportar el .txt)
 const productosModificados = new Map();
+
+// Genera un código interno ESTABLE (no aleatorio) para productos sin código de
+// barras, a partir de su descripción. El mismo producto siempre cae en el mismo
+// código, sin importar cuántas veces se recargue el catálogo (caché, Firestore
+// o el .txt) — así Firebase siempre encuentra/actualiza el mismo documento.
+function codigoInternoDesdeDescripcion(descripcion) {
+    const base = String(descripcion || '').trim().toUpperCase();
+    let hash = 0;
+    for (let i = 0; i < base.length; i++) {
+        hash = (hash * 31 + base.charCodeAt(i)) >>> 0;
+    }
+    return `SINCOD_${hash.toString(36)}`;
+}
+
+// Igual que codigoInternoDesdeDescripcion, pero además chequea que no choque
+// con ningún código ya existente en el catálogo (por si dos productos tienen
+// descripciones que generan el mismo hash). Usado al dar de alta un producto
+// nuevo manualmente, sin código de barras.
+function generarCodigoInternoUnico(descripcion) {
+    const base = codigoInternoDesdeDescripcion(descripcion);
+    let candidato = base;
+    let n = 2;
+    while (baseDeDatos.some(p => p.codigoArt === candidato)) {
+        candidato = `${base}_${n}`;
+        n++;
+    }
+    return candidato;
+}
+
+// Asegura que un producto tenga codigoArt no vacío, usando el código interno
+// estable si hace falta. Se aplica en TODOS los puntos donde el catálogo entra
+// a memoria (caché local, Firestore, importación de .txt).
+function normalizarCodigoProducto(producto) {
+    const codigo = String(producto.codigoArt ?? '').trim();
+    if (codigo === '') {
+        producto.codigoArt = codigoInternoDesdeDescripcion(producto.articulo);
+    }
+    return producto;
+}
 
 // -------------------------------
 // Caché local del catálogo (evita re-leer TODOS los productos de Firestore
@@ -146,6 +186,59 @@ document.getElementById('logoutBtn').addEventListener('click', function () {
     logoutUsuario();
 });
 
+// -------------------------------
+// 0b. Navegación por páginas (Escanear / Productos / Conteo / Más)
+// -------------------------------
+const bottomNav = document.getElementById('bottomNav');
+const paginas = ['escanear', 'productos', 'conteo', 'mas'];
+
+function activarPagina(nombre) {
+    if (!paginas.includes(nombre)) nombre = 'escanear';
+
+    paginas.forEach(p => {
+        document.getElementById('page' + p.charAt(0).toUpperCase() + p.slice(1))
+            .classList.toggle('is-active', p === nombre);
+    });
+
+    bottomNav.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.classList.toggle('is-active', btn.dataset.page === nombre);
+    });
+
+    // Si nos vamos de la página de escaneo, apagamos la cámara para no
+    // gastar batería/datos de fondo.
+    if (nombre !== 'escanear' && isScanning) {
+        detenerCamara();
+    }
+
+    // Si entramos a "Más" y todavía no se buscó nada, precargamos el rango de
+    // hoy y disparamos la búsqueda: así en la PC del mostrador el historial
+    // aparece solo, sin tener que tocar fechas ni el botón "Buscar conteos".
+    if (nombre === 'mas' && currentUser) {
+        const histDesde = document.getElementById('histDesde');
+        const histHasta = document.getElementById('histHasta');
+        if (!histDesde.value && !histHasta.value) {
+            const ahora = new Date();
+            const hoy = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}-${String(ahora.getDate()).padStart(2, '0')}`;
+            histDesde.value = hoy;
+            histHasta.value = hoy;
+            buscarHistorial();
+        }
+    }
+
+    window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+}
+
+bottomNav.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => activarPagina(btn.dataset.page));
+});
+
+function actualizarBadgeConteo() {
+    const badge = document.getElementById('navConteoBadge');
+    const cantidad = productosModificados.size;
+    badge.textContent = cantidad > 99 ? '99+' : String(cantidad);
+    badge.style.display = cantidad > 0 ? '' : 'none';
+}
+
 onAuthChange(async function (user) {
     currentUser = user;
 
@@ -172,23 +265,24 @@ async function inicializarSesion(uid) {
         //    de lecturas cada vez que se abre o se recarga la página).
         const cache = leerCacheCatalogo(uid);
         if (cache && cache.length > 0) {
-            baseDeDatos = cache;
+            baseDeDatos = cache.map(normalizarCodigoProducto);
             mostrarCatalogoListo();
         } else {
             // 2) Sin caché (primera vez en este dispositivo, o se limpió el caché):
             //    ahí sí bajamos todo el catálogo de Firestore, una sola vez, y lo guardamos.
             const catalogo = await obtenerCatalogo(uid);
             if (catalogo.length > 0) {
-                baseDeDatos = catalogo.map(p => ({
+                baseDeDatos = catalogo.map(p => normalizarCodigoProducto({
                     registrado: '',
                     hora: '',
                     codigoArt: p.codigo,
-                    articulo: p.descripcion,
-                    unidades: p.unidades,
+                    articulo: p.descripcion || '(sin descripción)',
+                    unidades: p.unidades || '',
                     stock_unidad: p.stock || 0
                 }));
                 guardarCacheCatalogo(uid);
                 mostrarCatalogoListo();
+                marcarSincronizado(); // ya vino fresco de Firestore, no hace falta re-sincronizar
             } else {
                 mostrarCargaInicial();
             }
@@ -210,20 +304,29 @@ async function inicializarSesion(uid) {
         console.error(err);
         showToast('No se pudo abrir el inventario del día.', 'error');
     }
+
+    // Si todavía no hay catálogo cargado, arrancamos en "Productos" para que
+    // vea el panel de carga inicial; si ya hay catálogo, vamos directo a escanear.
+    activarPagina(baseDeDatos.length === 0 ? 'productos' : 'escanear');
 }
 
 function resetEstadoApp() {
     baseDeDatos = [];
     hasChanges = false;
     productosModificados.clear();
+    actualizarBadgeConteo();
+    marcarPendienteDeSincronizar();
     inventarioActual = null;
     document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
+    productsSearchInput.value = '';
+    productsTableBody.innerHTML = '<tr><td colspan="2" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
     resetHistorial();
     deshabilitarEscaneo();
     const dbStatus = document.getElementById('dbStatus');
     dbStatus.innerText = 'DB vacía · 0 productos';
     dbStatus.classList.remove('is-ready');
     if (isScanning) detenerCamara();
+    activarPagina('escanear');
 }
 
 // -------------------------------
@@ -231,7 +334,7 @@ function resetEstadoApp() {
 // -------------------------------
 function mostrarCatalogoListo() {
     const dbStatus = document.getElementById('dbStatus');
-    dbStatus.innerText = `DB lista · ${baseDeDatos.length} productos`;
+    dbStatus.innerText = `Productos cargados · ${baseDeDatos.length} productos`;
     dbStatus.classList.add('is-ready');
 
     document.getElementById('catalogUploadPanel').style.display = 'none';
@@ -239,6 +342,8 @@ function mostrarCatalogoListo() {
     document.getElementById('catalogCount').textContent = baseDeDatos.length;
 
     habilitarEscaneo();
+    renderTablaProductos();
+    actualizarEstadoDescarga();
 }
 
 function mostrarCargaInicial() {
@@ -250,6 +355,7 @@ function mostrarCargaInicial() {
     document.getElementById('catalogStatus').style.display = 'none';
 
     deshabilitarEscaneo();
+    actualizarEstadoDescarga();
 }
 
 function habilitarEscaneo() {
@@ -266,28 +372,88 @@ function deshabilitarEscaneo() {
     document.getElementById('downloadBtn').disabled = true;
 }
 
+// -------------------------------
+// 1b. Estado de sincronización: el botón "Finalizar" se
+// habilita SOLO después de sincronizar, para asegurarnos de exportar con el
+// catálogo/inventario al día. Cualquier cambio local lo vuelve a marcar como
+// pendiente, para forzar a sincronizar de nuevo antes de descargar.
+// -------------------------------
+function marcarPendienteDeSincronizar() {
+    catalogoSincronizado = false;
+    actualizarEstadoDescarga();
+}
+
+function marcarSincronizado() {
+    catalogoSincronizado = true;
+    actualizarEstadoDescarga();
+}
+
+function actualizarEstadoDescarga() {
+    const nuevoInventarioBtn = document.getElementById('nuevoInventarioBtn');
+    const syncBadge = document.getElementById('syncBadge');
+
+    nuevoInventarioBtn.disabled = !(catalogoSincronizado && baseDeDatos.length > 0 && inventarioActual);
+
+    syncBadge.textContent = catalogoSincronizado ? 'Sincronizado' : 'Sin sincronizar';
+    syncBadge.classList.toggle('is-synced', catalogoSincronizado);
+}
+
 // Trae el catálogo fresco de Firestore (por ejemplo si otro dispositivo/local
-// modificó stock) y renueva el caché local. Solo se usa cuando hace falta,
-// no automáticamente en cada carga de página.
-document.getElementById('sincronizarCatalogoBtn').addEventListener('click', async function () {
-    if (!currentUser) return;
-    showToast('Sincronizando catálogo con Firebase…', 'info');
+// modificó stock) y renueva el caché local. Devuelve true/false según éxito.
+async function sincronizarCatalogoDesdeFirebase() {
+    if (!currentUser) return false;
     try {
         const catalogo = await obtenerCatalogo(currentUser.uid);
-        baseDeDatos = catalogo.map(p => ({
+        baseDeDatos = catalogo.map(p => normalizarCodigoProducto({
             registrado: '',
             hora: '',
             codigoArt: p.codigo,
-            articulo: p.descripcion,
-            unidades: p.unidades,
+            articulo: p.descripcion || '(sin descripción)',
+            unidades: p.unidades || '',
             stock_unidad: p.stock || 0
         }));
         guardarCacheCatalogo(currentUser.uid);
         document.getElementById('catalogCount').textContent = baseDeDatos.length;
-        showToast('Catálogo sincronizado.', 'success');
+        renderTablaProductos();
+        return true;
     } catch (err) {
         console.error(err);
+        return false;
+    }
+}
+
+// Botón "Sincronizar" dentro de la tarjeta de catálogo (pestaña Productos)
+document.getElementById('sincronizarCatalogoBtn').addEventListener('click', async function () {
+    if (!currentUser) return;
+    showToast('Sincronizando catálogo con Firebase…', 'info');
+    const ok = await sincronizarCatalogoDesdeFirebase();
+    if (ok) {
+        marcarSincronizado();
+        showToast('Catálogo sincronizado.', 'success');
+    } else {
         showToast('No se pudo sincronizar el catálogo.', 'error');
+    }
+});
+
+// Botón "Sincronizar" junto a "Finalizar" (pestaña Conteo):
+// Sincronizo -------> Descargo
+document.getElementById('sincronizarConteoBtn').addEventListener('click', async function () {
+    if (!currentUser) return;
+    const btn = this;
+    const textoOriginal = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Sincronizando…';
+
+    const ok = await sincronizarCatalogoDesdeFirebase();
+
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+
+    if (ok) {
+        marcarSincronizado();
+        showToast('Todo sincronizado. Ya podés descargar el .txt.', 'success');
+    } else {
+        showToast('No se pudo sincronizar. Probá de nuevo antes de descargar.', 'error');
     }
 });
 
@@ -315,6 +481,7 @@ document.getElementById('fileInput').addEventListener('change', function (e) {
 async function parseTxtYSubir(text) {
     const lines = text.split('\n');
     const productos = [];
+    let sinCodigoCount = 0;
 
     lines.forEach(line => {
         if (line.trim() === '') return;
@@ -322,16 +489,30 @@ async function parseTxtYSubir(text) {
 
         // La estructura es: Registrado;Hora;CodigoArt;Artículo;Unidades;Stock_Unidad;
         if (cols.length >= 6) {
+            // Algunos productos vienen sin código de barras (columna vacía).
+            // Firestore no admite IDs de documento ni field paths vacíos, así que
+            // les generamos un código interno ESTABLE (basado en la descripción)
+            // para que nunca quede "" y sea el mismo aunque reimportes el archivo.
+            let codigoArt = (cols[2] || '').trim();
+            if (codigoArt === '') {
+                sinCodigoCount++;
+                codigoArt = codigoInternoDesdeDescripcion(cols[3]);
+            }
+
             productos.push({
                 registrado: cols[0],
                 hora: cols[1],
-                codigoArt: cols[2],
+                codigoArt,
                 articulo: cols[3],
                 unidades: cols[4],
                 stock_unidad: parseInt(cols[5]) || 0
             });
         }
     });
+
+    if (sinCodigoCount > 0) {
+        showToast(`${sinCodigoCount} producto(s) sin código de barras: se les asignó un código interno.`, 'info');
+    }
 
     if (productos.length === 0) {
         showToast('El archivo no tiene productos con el formato esperado.', 'error');
@@ -346,6 +527,7 @@ async function parseTxtYSubir(text) {
         guardarCacheCatalogo(currentUser.uid);
         mostrarCatalogoListo();
         showToast(`Catálogo cargado: ${productos.length} productos.`, 'success');
+        activarPagina('escanear');
     } catch (err) {
         console.error(err);
         showToast('No se pudo subir el catálogo a Firebase.', 'error');
@@ -364,6 +546,9 @@ function cargarItemsExistentes(items) {
     const entradas = Object.values(items || {});
     if (entradas.length === 0) return;
 
+    const tbody = document.getElementById('scannedTable');
+    tbody.innerHTML = ''; // saca el placeholder "No hay modificaciones recientes"
+
     entradas.forEach(item => {
         const tr = document.createElement('tr');
         tr.dataset.codigo = item.codigo;
@@ -372,13 +557,14 @@ function cargarItemsExistentes(items) {
             <td>${item.descripcion}<span class="product-code">${item.codigo}</span></td>
             <td class="stock-cell">${item.stock}</td>
         `;
-        document.getElementById('scannedTable').appendChild(tr);
+        tbody.appendChild(tr);
 
         // Estos productos ya se habían modificado en este conteo (ej. se recargó
         // la página a mitad de jornada): los sumamos para que entren en el .txt.
         const producto = baseDeDatos.find(p => p.codigoArt === item.codigo);
         if (producto) productosModificados.set(item.codigo, producto);
     });
+    actualizarBadgeConteo();
     hasChanges = true;
 }
 
@@ -400,13 +586,28 @@ document.getElementById('nuevoInventarioBtn').addEventListener('click', async fu
     if (!currentUser || !inventarioActual) return;
 
     const cantidad = productosModificados.size;
-    const mensaje = cantidad > 0
-        ? `Se va a descargar el .txt con ${cantidad} producto(s) modificado(s) y se va a cerrar este conteo. ¿Confirmás?`
-        : 'No modificaste ningún producto en este conteo, así que no hay nada para descargar. ¿Igual querés finalizarlo?';
-    if (!confirm(mensaje)) return;
+    const mensajeConfirmar = cantidad > 0
+        ? `Se va a cerrar este conteo con ${cantidad} producto(s) modificado(s). ¿Confirmás?`
+        : 'No modificaste ningún producto en este conteo. ¿Igual querés finalizarlo?';
+    const confirmado = await mostrarConfirm({
+        titulo: 'Finalizar conteo',
+        mensaje: mensajeConfirmar,
+        textoConfirmar: 'Finalizar'
+    });
+    if (!confirmado) return;
+
+    // Descargar el .txt en este dispositivo es opcional: normalmente el conteo
+    // se hace desde el celular y el .txt se termina bajando desde la PC del
+    // mostrador (pestaña "Más" → Historial), así que preguntamos en vez de
+    // descargar siempre.
+    const descargarAca = cantidad > 0 && await mostrarConfirm({
+        titulo: 'Descargar .txt',
+        mensaje: '¿Querés descargar el .txt en este dispositivo también?\n\n(Si vas a bajarlo después desde la PC del mostrador, podés tocar "Cancelar").',
+        textoConfirmar: 'Descargar'
+    });
 
     try {
-        if (cantidad > 0) {
+        if (descargarAca) {
             descargarTxt(generarContenidoTxt(productosModificadosACanonico()), 'inventario_actualizado.txt');
         }
 
@@ -415,6 +616,8 @@ document.getElementById('nuevoInventarioBtn').addEventListener('click', async fu
         renderInventarioBar();
         hasChanges = false;
         productosModificados.clear();
+        actualizarBadgeConteo();
+        marcarPendienteDeSincronizar();
         document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
         showToast(`Conteo finalizado. Nuevo inventario iniciado: ${inventarioActual.nombre}`, 'success');
     } catch (err) {
@@ -498,7 +701,8 @@ function normalizarTexto(texto) {
 }
 
 buscarArticuloInput.addEventListener('input', function () {
-    const termino = normalizarTexto(this.value.trim());
+    const textoOriginal = this.value.trim();
+    const termino = normalizarTexto(textoOriginal);
 
     if (termino.length < 2) {
         buscarResultados.innerHTML = '';
@@ -510,14 +714,31 @@ buscarArticuloInput.addEventListener('input', function () {
         .filter(p => normalizarTexto(p.articulo).includes(termino))
         .slice(0, 25);
 
-    renderResultadosBusqueda(coincidencias);
+    renderResultadosBusqueda(coincidencias, textoOriginal);
 });
 
-function renderResultadosBusqueda(productos) {
+function renderResultadosBusqueda(productos, textoBuscado) {
     buscarResultados.classList.add('has-items');
 
     if (productos.length === 0) {
-        buscarResultados.innerHTML = '<div class="buscar-sin-resultados">No se encontró ningún producto con ese nombre.</div>';
+        buscarResultados.innerHTML = '';
+
+        const sinResultados = document.createElement('div');
+        sinResultados.className = 'buscar-sin-resultados';
+        sinResultados.textContent = 'No se encontró ningún producto con ese nombre.';
+        buscarResultados.appendChild(sinResultados);
+
+        const btnAgregar = document.createElement('button');
+        btnAgregar.type = 'button';
+        btnAgregar.className = 'btn btn--ghost btn--full';
+        btnAgregar.textContent = `Agregar "${textoBuscado}" como producto nuevo (sin código de barras)`;
+        btnAgregar.addEventListener('click', () => {
+            abrirModalProductoNuevo(null, textoBuscado);
+            buscarArticuloInput.value = '';
+            buscarResultados.innerHTML = '';
+            buscarResultados.classList.remove('has-items');
+        });
+        buscarResultados.appendChild(btnAgregar);
         return;
     }
 
@@ -538,6 +759,55 @@ function renderResultadosBusqueda(productos) {
         buscarResultados.appendChild(fila);
     });
 }
+
+// -------------------------------
+// 4c. Listado completo del catálogo ("Todos los productos")
+// -------------------------------
+const productsSearchInput = document.getElementById('productsSearchInput');
+const productsTableBody = document.getElementById('productsTableBody');
+
+function renderTablaProductos() {
+    const termino = normalizarTexto(productsSearchInput.value.trim());
+
+    if (baseDeDatos.length === 0) {
+        productsTableBody.innerHTML = '<tr><td colspan="2" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
+        return;
+    }
+
+    const lista = termino.length === 0
+        ? baseDeDatos
+        : baseDeDatos.filter(p =>
+            normalizarTexto(p.articulo).includes(termino) ||
+            normalizarTexto(p.codigoArt).includes(termino)
+        );
+
+    if (lista.length === 0) {
+        productsTableBody.innerHTML = '<tr><td colspan="2" class="empty-row">No se encontró ningún producto con ese criterio</td></tr>';
+        return;
+    }
+
+    const ordenada = [...lista].sort((a, b) => String(a.articulo || '').localeCompare(String(b.articulo || ''), 'es'));
+
+    productsTableBody.innerHTML = '';
+    ordenada.forEach(producto => {
+        const tr = document.createElement('tr');
+        tr.dataset.codigo = producto.codigoArt;
+        tr.innerHTML = `
+            <td>${producto.articulo}<span class="product-code">${producto.codigoArt}</span></td>
+            <td class="stock-cell">${producto.stock_unidad}</td>
+        `;
+        productsTableBody.appendChild(tr);
+    });
+}
+
+productsSearchInput.addEventListener('input', renderTablaProductos);
+
+productsTableBody.addEventListener('click', function (e) {
+    const fila = e.target.closest('tr[data-codigo]');
+    if (!fila) return;
+    const producto = baseDeDatos.find(p => p.codigoArt === fila.dataset.codigo);
+    if (producto) abrirModalCantidad(producto, 'editar');
+});
 
 // -------------------------------
 // 5. Escaneo por cámara (html5-qrcode)
@@ -722,7 +992,10 @@ document.getElementById('qtyConfirm').addEventListener('click', async () => {
     actualizarTablaUI(producto);
     hasChanges = true;
     productosModificados.set(producto.codigoArt, producto);
+    actualizarBadgeConteo();
+    marcarPendienteDeSincronizar();
     guardarCacheCatalogo(currentUser.uid);
+    renderTablaProductos();
     showToast(
         modo === 'editar'
             ? `${producto.articulo}: stock corregido a ${producto.stock_unidad}.`
@@ -731,7 +1004,7 @@ document.getElementById('qtyConfirm').addEventListener('click', async () => {
     );
     cerrarModalCantidad();
 
-    const ok = await actualizarStockProducto(currentUser.uid, producto.codigoArt, producto.stock_unidad);
+    const ok = await actualizarStockProducto(currentUser.uid, producto);
     if (!ok) {
         showToast(`No se pudo sincronizar el stock de "${producto.articulo}" con el catálogo.`, 'error');
     }
@@ -751,11 +1024,13 @@ qtyModal.addEventListener('click', (e) => {
 // 8. Modal de producto nuevo (código no encontrado en el catálogo)
 // -------------------------------
 const newProductModal = document.getElementById('newProductModal');
+let altaSinCodigo = false; // true cuando el modal se abrió desde "Por nombre" (sin código de barras)
 
-function abrirModalProductoNuevo(codigo) {
-    pendingScanCode = codigo;
-    document.getElementById('npCodigo').textContent = codigo;
-    document.getElementById('npDescripcion').value = '';
+function abrirModalProductoNuevo(codigo, descripcionPrellenada = '') {
+    altaSinCodigo = !codigo;
+    pendingScanCode = codigo || null;
+    document.getElementById('npCodigo').textContent = codigo || 'Se asignará un código interno automáticamente';
+    document.getElementById('npDescripcion').value = descripcionPrellenada;
     document.getElementById('npUnidades').value = 'unidad';
     document.getElementById('npStock').value = 1;
     newProductModal.classList.add('open');
@@ -765,6 +1040,7 @@ function abrirModalProductoNuevo(codigo) {
 function cerrarModalProductoNuevo() {
     newProductModal.classList.remove('open');
     pendingScanCode = null;
+    altaSinCodigo = false;
 }
 
 document.getElementById('npCancel').addEventListener('click', cerrarModalProductoNuevo);
@@ -772,8 +1048,102 @@ newProductModal.addEventListener('click', (e) => {
     if (e.target === newProductModal) cerrarModalProductoNuevo();
 });
 
+// -------------------------------
+// 8b. Modales de confirmación (reemplazan a los confirm()/prompt() nativos)
+// -------------------------------
+
+// mostrarConfirm({ titulo, mensaje, textoConfirmar, textoCancelar }) -> Promise<boolean>
+// Reemplazo de window.confirm() con el diseño del sistema.
+const confirmModal = document.getElementById('confirmModal');
+const confirmModalTitle = document.getElementById('confirmModalTitle');
+const confirmModalMessage = document.getElementById('confirmModalMessage');
+const confirmModalBtnConfirm = document.getElementById('confirmModalConfirm');
+const confirmModalBtnCancel = document.getElementById('confirmModalCancel');
+
+function mostrarConfirm({ titulo = '¿Confirmás?', mensaje = '', textoConfirmar = 'Confirmar', textoCancelar = 'Cancelar' } = {}) {
+    return new Promise((resolve) => {
+        confirmModalTitle.textContent = titulo;
+        confirmModalMessage.textContent = mensaje;
+        confirmModalBtnConfirm.textContent = textoConfirmar;
+        confirmModalBtnCancel.textContent = textoCancelar;
+        confirmModal.classList.add('open');
+
+        function limpiar() {
+            confirmModal.classList.remove('open');
+            confirmModalBtnConfirm.removeEventListener('click', onConfirmar);
+            confirmModalBtnCancel.removeEventListener('click', onCancelar);
+            confirmModal.removeEventListener('click', onOverlay);
+            document.removeEventListener('keydown', onTecla);
+        }
+        function onConfirmar() { limpiar(); resolve(true); }
+        function onCancelar() { limpiar(); resolve(false); }
+        function onOverlay(e) { if (e.target === confirmModal) onCancelar(); }
+        function onTecla(e) { if (e.key === 'Escape') onCancelar(); }
+
+        confirmModalBtnConfirm.addEventListener('click', onConfirmar);
+        confirmModalBtnCancel.addEventListener('click', onCancelar);
+        confirmModal.addEventListener('click', onOverlay);
+        document.addEventListener('keydown', onTecla);
+    });
+}
+
+// mostrarConfirmPeligroso({ titulo, mensaje, palabraConfirmacion }) -> Promise<boolean>
+// Reemplazo de window.prompt() para acciones destructivas: exige tipear una
+// palabra exacta (ej. "BORRAR") para habilitar el botón de confirmar.
+const dangerModal = document.getElementById('dangerModal');
+const dangerModalTitle = document.getElementById('dangerModalTitle');
+const dangerModalMessage = document.getElementById('dangerModalMessage');
+const dangerModalInputLabel = document.getElementById('dangerModalInputLabel');
+const dangerModalInput = document.getElementById('dangerModalInput');
+const dangerModalBtnConfirm = document.getElementById('dangerModalConfirm');
+const dangerModalBtnCancel = document.getElementById('dangerModalCancel');
+
+function mostrarConfirmPeligroso({ titulo = 'Zona de peligro', mensaje = '', palabraConfirmacion = 'BORRAR', textoConfirmar = 'Confirmar' } = {}) {
+    return new Promise((resolve) => {
+        dangerModalTitle.textContent = titulo;
+        dangerModalMessage.textContent = mensaje;
+        dangerModalInputLabel.textContent = `Escribí ${palabraConfirmacion} para confirmar`;
+        dangerModalInput.placeholder = palabraConfirmacion;
+        dangerModalInput.value = '';
+        dangerModalBtnConfirm.textContent = textoConfirmar;
+        dangerModalBtnConfirm.disabled = true;
+        dangerModal.classList.add('open');
+        setTimeout(() => dangerModalInput.focus(), 50);
+
+        function chequearInput() {
+            dangerModalBtnConfirm.disabled = dangerModalInput.value !== palabraConfirmacion;
+        }
+        function limpiar() {
+            dangerModal.classList.remove('open');
+            dangerModalBtnConfirm.removeEventListener('click', onConfirmar);
+            dangerModalBtnCancel.removeEventListener('click', onCancelar);
+            dangerModal.removeEventListener('click', onOverlay);
+            dangerModalInput.removeEventListener('input', chequearInput);
+            dangerModalInput.removeEventListener('keydown', onTeclaInput);
+            document.removeEventListener('keydown', onTecla);
+        }
+        function onConfirmar() {
+            if (dangerModalInput.value !== palabraConfirmacion) return;
+            limpiar();
+            resolve(true);
+        }
+        function onCancelar() { limpiar(); resolve(false); }
+        function onOverlay(e) { if (e.target === dangerModal) onCancelar(); }
+        function onTecla(e) { if (e.key === 'Escape') onCancelar(); }
+        function onTeclaInput(e) { if (e.key === 'Enter') onConfirmar(); }
+
+        dangerModalBtnConfirm.addEventListener('click', onConfirmar);
+        dangerModalBtnCancel.addEventListener('click', onCancelar);
+        dangerModal.addEventListener('click', onOverlay);
+        dangerModalInput.addEventListener('input', chequearInput);
+        dangerModalInput.addEventListener('keydown', onTeclaInput);
+        document.addEventListener('keydown', onTecla);
+    });
+}
+
 document.getElementById('npConfirm').addEventListener('click', async () => {
-    if (!pendingScanCode || !currentUser) return;
+    if (!currentUser) return;
+    if (!altaSinCodigo && !pendingScanCode) return;
 
     const descripcion = document.getElementById('npDescripcion').value.trim();
     const unidades = document.getElementById('npUnidades').value.trim() || 'unidad';
@@ -788,10 +1158,14 @@ document.getElementById('npConfirm').addEventListener('click', async () => {
         return;
     }
 
+    // Si viene de un escaneo usamos ese código; si es alta manual (sin código
+    // de barras) generamos uno interno estable a partir de la descripción.
+    const codigoArt = altaSinCodigo ? generarCodigoInternoUnico(descripcion) : pendingScanCode;
+
     const nuevoProducto = {
         registrado: '',
         hora: '',
-        codigoArt: pendingScanCode,
+        codigoArt,
         articulo: descripcion,
         unidades,
         stock_unidad: stockInicial
@@ -801,7 +1175,10 @@ document.getElementById('npConfirm').addEventListener('click', async () => {
     actualizarTablaUI(nuevoProducto);
     hasChanges = true;
     productosModificados.set(nuevoProducto.codigoArt, nuevoProducto);
+    actualizarBadgeConteo();
+    marcarPendienteDeSincronizar();
     guardarCacheCatalogo(currentUser.uid);
+    renderTablaProductos();
 
     cerrarModalProductoNuevo();
     showToast(`${descripcion}: producto nuevo agregado con stock ${stockInicial}.`, 'success');
@@ -869,7 +1246,7 @@ document.getElementById('downloadBtn').addEventListener('click', function () {
 // -------------------------------
 // 11. Historial de conteos finalizados (.txt anteriores)
 // -------------------------------
-document.getElementById('histBuscarBtn').addEventListener('click', async function () {
+async function buscarHistorial() {
     if (!currentUser) return;
 
     const desdeVal = document.getElementById('histDesde').value;
@@ -889,7 +1266,9 @@ document.getElementById('histBuscarBtn').addEventListener('click', async functio
         vacio.textContent = 'No se pudo traer el historial. Si es la primera vez, puede que falte crear un índice en Firestore: fijate en la consola del navegador, Firebase suele tirar un link para crearlo con un clic.';
         vacio.style.display = '';
     }
-});
+}
+
+document.getElementById('histBuscarBtn').addEventListener('click', buscarHistorial);
 
 function renderHistorial(resultados) {
     const lista = document.getElementById('historialLista');
@@ -972,8 +1351,12 @@ function resetHistorial() {
 document.getElementById('borrarTodoBtn').addEventListener('click', async function () {
     if (!currentUser) return;
 
-    const confirmacion = prompt(`Esto borra TODOS los productos y TODOS los inventarios de ${currentUser.email}. No se puede deshacer.\n\nEscribí BORRAR para confirmar:`);
-    if (confirmacion !== 'BORRAR') {
+    const confirmado = await mostrarConfirmPeligroso({
+        titulo: 'Borrar todo',
+        mensaje: `Esto borra TODOS los productos y TODOS los inventarios de ${currentUser.email}. No se puede deshacer.`,
+        palabraConfirmacion: 'BORRAR'
+    });
+    if (!confirmado) {
         showToast('Cancelado. No se borró nada.', 'info');
         return;
     }
@@ -990,8 +1373,12 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
         baseDeDatos = [];
         hasChanges = false;
         productosModificados.clear();
+        actualizarBadgeConteo();
+        marcarPendienteDeSincronizar();
         resetHistorial();
         document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
+        productsSearchInput.value = '';
+        renderTablaProductos();
 
         inventarioActual = await crearInventario(currentUser.uid);
         renderInventarioBar();
