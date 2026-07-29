@@ -137,6 +137,36 @@ export async function actualizarStockProducto(uid, codigo, nuevoStock) {
     }
 }
 
+// Borra TODOS los productos del catálogo de un usuario. Uso exclusivo de
+// testing/reset (ver app.js: solo se puede disparar con ?reset=1 en la URL).
+export async function borrarCatalogoCompleto(uid) {
+    const q = query(collection(db, "productos"), where("usuario", "==", uid));
+    const snap = await getDocs(q);
+    const docs = snap.docs;
+    const CHUNK = 450;
+    for (let i = 0; i < docs.length; i += CHUNK) {
+        const batch = writeBatch(db);
+        docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+    }
+    return docs.length;
+}
+
+// Borra TODOS los inventarios (abiertos y cerrados) de un usuario. Mismo uso
+// exclusivo de testing/reset que borrarCatalogoCompleto.
+export async function borrarInventariosCompleto(uid) {
+    const q = query(collection(db, "inventarios"), where("usuario", "==", uid));
+    const snap = await getDocs(q);
+    const docs = snap.docs;
+    const CHUNK = 450;
+    for (let i = 0; i < docs.length; i += CHUNK) {
+        const batch = writeBatch(db);
+        docs.slice(i, i + CHUNK).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+    }
+    return docs.length;
+}
+
 // =========================================================
 // Inventarios (colección "inventarios", 1 doc por conteo)
 // =========================================================
@@ -172,6 +202,28 @@ export async function crearInventario(uid) {
 export async function cerrarInventario(inventarioId) {
     const ref = doc(db, "inventarios", inventarioId);
     await updateDoc(ref, { estado: "cerrado", fechaCierre: serverTimestamp() });
+}
+
+// Historial de conteos ya finalizados (cada uno equivale a un .txt descargado).
+// desde/hasta son objetos Date de JS (opcionales) para acotar por fecha de cierre.
+export async function obtenerInventariosCerrados(uid, desde = null, hasta = null) {
+    const condiciones = [
+        where("usuario", "==", uid),
+        where("estado", "==", "cerrado")
+    ];
+    if (desde) condiciones.push(where("fechaCierre", ">=", desde));
+    if (hasta) condiciones.push(where("fechaCierre", "<=", hasta));
+
+    const q = query(
+        collection(db, "inventarios"),
+        ...condiciones,
+        orderBy("fechaCierre", "desc"),
+        limit(100)
+    );
+    const snap = await getDocs(q);
+    const resultados = [];
+    snap.forEach(d => resultados.push({ id: d.id, ...d.data() }));
+    return resultados;
 }
 
 // Actualiza (o crea) un item puntual dentro del mapa "items" del inventario actual.
