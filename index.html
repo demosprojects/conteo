@@ -54,8 +54,9 @@
         <div>
             <div class="inv-name" id="invName">—</div>
             <div class="inv-state" id="invState">—</div>
+            <div class="inv-hint">Cuando termines de contar, tocá "Finalizar conteo": ahí se genera y descarga el .txt con lo modificado, y arranca un conteo nuevo.</div>
         </div>
-        <button class="btn btn--ghost btn--sm" id="nuevoInventarioBtn" type="button">Nuevo inventario</button>
+        <button class="btn btn--amber btn--sm" id="nuevoInventarioBtn" type="button">Finalizar y descargar .txt</button>
     </div>
 
     <main class="layout">
@@ -66,11 +67,11 @@
             <div class="card">
                 <span class="card__step">01 · Catálogo</span>
                 <h2>Base de datos de productos</h2>
-                <p class="hint">Se sube una sola vez. Los productos nuevos que detectes al escanear se agregan solos.</p>
+                <p class="hint">Este .txt se usa una única vez para la carga inicial del catálogo. Después de subirlo, el catálogo queda guardado en tu cuenta y se maneja todo desde acá: los productos nuevos que detectes al escanear se agregan solos.</p>
 
                 <div class="catalog-status" id="catalogStatus" style="display:none;">
                     <span><strong id="catalogCount">0</strong> productos cargados en tu cuenta</span>
-                    <button type="button" class="link-btn" id="reemplazarCatalogoBtn">Reemplazar</button>
+                    <button type="button" class="link-btn" id="sincronizarCatalogoBtn">Sincronizar</button>
                 </div>
 
                 <div id="catalogUploadPanel">
@@ -85,7 +86,8 @@
 
                 <div class="tabs">
                     <div class="tab is-active" id="tabCamera" data-tab="camera">Cámara</div>
-                    <div class="tab" id="tabManual" data-tab="manual">Manual</div>
+                    <div class="tab" id="tabManual" data-tab="manual">Código</div>
+                    <div class="tab" id="tabBuscar" data-tab="buscar">Por nombre</div>
                 </div>
 
                 <!-- Panel cámara -->
@@ -109,18 +111,25 @@
                     </div>
                 </div>
 
-                <!-- Panel manual -->
+                <!-- Panel manual (código) -->
                 <div class="tab-panel" id="panelManual" style="display:none;">
                     <input type="text" id="scannerInput" placeholder="Ingresá o pegá el código y presioná Enter…"
                         class="manual-input" disabled>
                 </div>
+
+                <!-- Panel búsqueda por nombre (para productos sin código de barra) -->
+                <div class="tab-panel" id="panelBuscar" style="display:none;">
+                    <input type="text" id="buscarArticuloInput" placeholder="Escribí parte del nombre del producto…"
+                        class="manual-input" disabled autocomplete="off">
+                    <div class="buscar-resultados" id="buscarResultados"></div>
+                </div>
             </div>
 
             <div class="card card--export">
-                <span class="card__step">03 · Exportar</span>
-                <h2>Actualizar inventario</h2>
-                <p class="hint">Descargá el .txt con el stock modificado para subir al sistema del mostrador.</p>
-                <button id="downloadBtn" class="btn btn--success btn--full" disabled>Descargar inventario_actualizado.txt</button>
+                <span class="card__step">03 · Avance (opcional)</span>
+                <h2>Descargar avance parcial</h2>
+                <p class="hint">No hace falta para nada: el .txt definitivo se genera solo al tocar "Finalizar y descargar .txt". Usá esto solo si necesitás bajar un adelanto a mitad de conteo.</p>
+                <button id="downloadBtn" class="btn btn--ghost btn--full" disabled>Descargar avance parcial</button>
             </div>
 
         </section>
@@ -130,6 +139,7 @@
             <div class="card log-card">
                 <span class="card__step">Registro</span>
                 <h2>Modificaciones</h2>
+                <p class="hint">¿Te equivocaste al escanear? Tocá la fila del producto para corregir el stock.</p>
                 <div class="log-table-wrap">
                     <table class="log-table">
                         <thead>
@@ -145,6 +155,38 @@
                     </table>
                 </div>
             </div>
+
+            <div class="card" id="historialCard">
+                <span class="card__step">Historial</span>
+                <h2>Conteos anteriores (.txt)</h2>
+                <p class="hint">Buscá por fecha los conteos ya finalizados y volvé a descargar o revisar los productos de cualquiera.</p>
+
+                <div class="historial-filtros">
+                    <div class="field-group">
+                        <label class="field-label" for="histDesde">Desde</label>
+                        <input type="date" id="histDesde" class="manual-input">
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label" for="histHasta">Hasta</label>
+                        <input type="date" id="histHasta" class="manual-input">
+                    </div>
+                </div>
+                <button class="btn btn--ghost btn--full" id="histBuscarBtn" type="button">Buscar conteos</button>
+
+                <div class="historial-lista" id="historialLista">
+                    <p class="hint" id="historialVacio">Elegí un rango de fechas y tocá "Buscar conteos".</p>
+                </div>
+            </div>
+
+            <!-- Zona de peligro: solo visible con ?reset=1 en la URL. Uso exclusivo
+                 de testing, borra catálogo e inventarios completos para volver a
+                 subir un .txt desde cero. -->
+            <div class="card card--danger" id="dangerZone" style="display:none;">
+                <span class="card__step">⚠ Testing</span>
+                <h2>Borrar catálogo completo</h2>
+                <p class="hint">Elimina TODOS los productos y TODOS los inventarios (abiertos y cerrados) de esta cuenta, para poder subir un .txt inicial de nuevo. No se puede deshacer.</p>
+                <button class="btn btn--danger btn--full" id="borrarTodoBtn" type="button">Borrar catálogo e inventarios</button>
+            </div>
         </section>
 
     </main>
@@ -153,9 +195,11 @@
 <!-- Modal de cantidad (producto conocido) -->
 <div class="modal-overlay" id="qtyModal">
     <div class="modal">
+        <span class="modal-mode-badge" id="qtyModalModeBadge">Sumar / restar</span>
         <h3 id="qtyModalProductName">Producto</h3>
         <p class="modal-code">Código: <span id="qtyModalProductCode">—</span></p>
         <p class="stock-current">Stock actual: <strong id="qtyModalCurrentStock">0</strong></p>
+        <p class="qty-mode-hint" id="qtyModalHint">Ingresá cuánto sumar o restar (usá números negativos para restar).</p>
 
         <div class="qty-control">
             <button class="qty-btn" id="qtyMinus" type="button">−</button>
