@@ -10,7 +10,10 @@ import {
     obtenerInventarioAbierto,
     crearInventario,
     cerrarInventario,
-    actualizarItemInventario
+    actualizarItemInventario,
+    obtenerInventariosCerrados,
+    borrarCatalogoCompleto,
+    borrarInventariosCompleto
 } from './firebase.js';
 
 let baseDeDatos = [];
@@ -19,6 +22,41 @@ let pendingProduct = null;
 let pendingScanCode = null;
 let currentUser = null;
 let inventarioActual = null; // { id, nombre, estado, items }
+
+// Solo los productos que se modificaron en el conteo actual (para exportar el .txt)
+const productosModificados = new Map();
+
+// -------------------------------
+// Caché local del catálogo (evita re-leer TODOS los productos de Firestore
+// en cada carga de página; eso es lo que satura la cuota del plan gratis)
+// -------------------------------
+function claveCache(uid) {
+    return `catalogo_cache_${uid}`;
+}
+
+function guardarCacheCatalogo(uid) {
+    try {
+        localStorage.setItem(claveCache(uid), JSON.stringify(baseDeDatos));
+    } catch (e) {
+        console.warn('No se pudo guardar el caché local del catálogo:', e);
+    }
+}
+
+function leerCacheCatalogo(uid) {
+    try {
+        const raw = localStorage.getItem(claveCache(uid));
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+        console.warn('No se pudo leer el caché local del catálogo:', e);
+        return null;
+    }
+}
+
+function borrarCacheCatalogo(uid) {
+    try {
+        localStorage.removeItem(claveCache(uid));
+    } catch (e) { /* noop */ }
+}
 
 // -------------------------------
 // Toasts
@@ -34,6 +72,43 @@ function showToast(message, type = 'info') {
         toast.classList.add('fade-out');
         setTimeout(() => toast.remove(), 200);
     }, 3200);
+}
+
+// -------------------------------
+// Generación y descarga de .txt (reutilizado por el avance parcial,
+// la finalización del conteo, y el historial)
+// -------------------------------
+
+// Recibe una lista de items ya "canónicos": {registrado, hora, codigo, descripcion, unidades, stock}
+function generarContenidoTxt(items) {
+    let contenido = '';
+    items.forEach(it => {
+        contenido += `${it.registrado || ''};${it.hora || ''};${it.codigo};${it.descripcion};${it.unidades};${it.stock};\n`;
+    });
+    return contenido;
+}
+
+function descargarTxt(contenido, nombreArchivo) {
+    const blob = new Blob([contenido], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nombreArchivo;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// Convierte los productos modificados en memoria (shape de baseDeDatos) al
+// formato canónico que usa generarContenidoTxt.
+function productosModificadosACanonico() {
+    return Array.from(productosModificados.values()).map(p => ({
+        registrado: p.registrado,
+        hora: p.hora,
+        codigo: p.codigoArt,
+        descripcion: p.articulo,
+        unidades: p.unidades,
+        stock: p.stock_unidad
+    }));
 }
 
 // -------------------------------
@@ -78,6 +153,10 @@ onAuthChange(async function (user) {
         loginScreen.classList.add('is-hidden');
         appRoot.classList.remove('is-hidden');
         document.getElementById('userChip').textContent = user.email;
+
+        const params = new URLSearchParams(location.search);
+        document.getElementById('dangerZone').style.display = params.get('reset') === '1' ? '' : 'none';
+
         await inicializarSesion(user.uid);
     } else {
         appRoot.classList.add('is-hidden');
@@ -88,19 +167,31 @@ onAuthChange(async function (user) {
 
 async function inicializarSesion(uid) {
     try {
-        const catalogo = await obtenerCatalogo(uid);
-        if (catalogo.length > 0) {
-            baseDeDatos = catalogo.map(p => ({
-                registrado: '',
-                hora: '',
-                codigoArt: p.codigo,
-                articulo: p.descripcion,
-                unidades: p.unidades,
-                stock_unidad: p.stock || 0
-            }));
+        // 1) Primero miramos si ya tenemos el catálogo cacheado en este dispositivo.
+        //    Si existe, lo usamos directo y NO leemos Firestore (ahorra cientos/miles
+        //    de lecturas cada vez que se abre o se recarga la página).
+        const cache = leerCacheCatalogo(uid);
+        if (cache && cache.length > 0) {
+            baseDeDatos = cache;
             mostrarCatalogoListo();
         } else {
-            mostrarCargaInicial();
+            // 2) Sin caché (primera vez en este dispositivo, o se limpió el caché):
+            //    ahí sí bajamos todo el catálogo de Firestore, una sola vez, y lo guardamos.
+            const catalogo = await obtenerCatalogo(uid);
+            if (catalogo.length > 0) {
+                baseDeDatos = catalogo.map(p => ({
+                    registrado: '',
+                    hora: '',
+                    codigoArt: p.codigo,
+                    articulo: p.descripcion,
+                    unidades: p.unidades,
+                    stock_unidad: p.stock || 0
+                }));
+                guardarCacheCatalogo(uid);
+                mostrarCatalogoListo();
+            } else {
+                mostrarCargaInicial();
+            }
         }
     } catch (err) {
         console.error(err);
@@ -124,8 +215,10 @@ async function inicializarSesion(uid) {
 function resetEstadoApp() {
     baseDeDatos = [];
     hasChanges = false;
+    productosModificados.clear();
     inventarioActual = null;
     document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
+    resetHistorial();
     deshabilitarEscaneo();
     const dbStatus = document.getElementById('dbStatus');
     dbStatus.innerText = 'DB vacía · 0 productos';
@@ -161,23 +254,55 @@ function mostrarCargaInicial() {
 
 function habilitarEscaneo() {
     document.getElementById('scannerInput').disabled = false;
+    document.getElementById('buscarArticuloInput').disabled = false;
     document.getElementById('startCameraBtn').disabled = false;
     document.getElementById('downloadBtn').disabled = false;
 }
 
 function deshabilitarEscaneo() {
     document.getElementById('scannerInput').disabled = true;
+    document.getElementById('buscarArticuloInput').disabled = true;
     document.getElementById('startCameraBtn').disabled = true;
     document.getElementById('downloadBtn').disabled = true;
 }
 
-document.getElementById('reemplazarCatalogoBtn').addEventListener('click', function () {
-    document.getElementById('catalogUploadPanel').style.display = '';
+// Trae el catálogo fresco de Firestore (por ejemplo si otro dispositivo/local
+// modificó stock) y renueva el caché local. Solo se usa cuando hace falta,
+// no automáticamente en cada carga de página.
+document.getElementById('sincronizarCatalogoBtn').addEventListener('click', async function () {
+    if (!currentUser) return;
+    showToast('Sincronizando catálogo con Firebase…', 'info');
+    try {
+        const catalogo = await obtenerCatalogo(currentUser.uid);
+        baseDeDatos = catalogo.map(p => ({
+            registrado: '',
+            hora: '',
+            codigoArt: p.codigo,
+            articulo: p.descripcion,
+            unidades: p.unidades,
+            stock_unidad: p.stock || 0
+        }));
+        guardarCacheCatalogo(currentUser.uid);
+        document.getElementById('catalogCount').textContent = baseDeDatos.length;
+        showToast('Catálogo sincronizado.', 'success');
+    } catch (err) {
+        console.error(err);
+        showToast('No se pudo sincronizar el catálogo.', 'error');
+    }
 });
 
 document.getElementById('fileInput').addEventListener('change', function (e) {
     const file = e.target.files[0];
     if (!file || !currentUser) return;
+
+    // El .txt es SOLO para la carga inicial. Si ya hay catálogo cargado en esta
+    // cuenta, no se vuelve a usar: los cambios se manejan desde la app y se
+    // exportan con el botón de descarga.
+    if (baseDeDatos.length > 0) {
+        showToast('El catálogo ya está cargado. El .txt solo se usa para la carga inicial; los cambios se manejan desde acá.', 'error');
+        e.target.value = '';
+        return;
+    }
 
     const reader = new FileReader();
     reader.onload = function (e) {
@@ -218,6 +343,7 @@ async function parseTxtYSubir(text) {
     try {
         await importarCatalogo(currentUser.uid, productos);
         baseDeDatos = productos;
+        guardarCacheCatalogo(currentUser.uid);
         mostrarCatalogoListo();
         showToast(`Catálogo cargado: ${productos.length} productos.`, 'success');
     } catch (err) {
@@ -240,30 +366,60 @@ function cargarItemsExistentes(items) {
 
     entradas.forEach(item => {
         const tr = document.createElement('tr');
+        tr.dataset.codigo = item.codigo;
         tr.innerHTML = `
             <td class="time-cell">—</td>
             <td>${item.descripcion}<span class="product-code">${item.codigo}</span></td>
             <td class="stock-cell">${item.stock}</td>
         `;
         document.getElementById('scannedTable').appendChild(tr);
+
+        // Estos productos ya se habían modificado en este conteo (ej. se recargó
+        // la página a mitad de jornada): los sumamos para que entren en el .txt.
+        const producto = baseDeDatos.find(p => p.codigoArt === item.codigo);
+        if (producto) productosModificados.set(item.codigo, producto);
     });
     hasChanges = true;
 }
 
+document.getElementById('scannedTable').addEventListener('click', function (e) {
+    const fila = e.target.closest('tr[data-codigo]');
+    if (!fila) return;
+
+    const codigo = fila.dataset.codigo;
+    const producto = baseDeDatos.find(p => p.codigoArt === codigo);
+
+    if (!producto) {
+        showToast('No se encontró este producto en el catálogo para editarlo.', 'error');
+        return;
+    }
+    abrirModalCantidad(producto, 'editar');
+});
+
 document.getElementById('nuevoInventarioBtn').addEventListener('click', async function () {
     if (!currentUser || !inventarioActual) return;
-    if (!confirm('¿Iniciar un nuevo inventario? El actual quedará cerrado y guardado en el historial.')) return;
+
+    const cantidad = productosModificados.size;
+    const mensaje = cantidad > 0
+        ? `Se va a descargar el .txt con ${cantidad} producto(s) modificado(s) y se va a cerrar este conteo. ¿Confirmás?`
+        : 'No modificaste ningún producto en este conteo, así que no hay nada para descargar. ¿Igual querés finalizarlo?';
+    if (!confirm(mensaje)) return;
 
     try {
+        if (cantidad > 0) {
+            descargarTxt(generarContenidoTxt(productosModificadosACanonico()), 'inventario_actualizado.txt');
+        }
+
         await cerrarInventario(inventarioActual.id);
         inventarioActual = await crearInventario(currentUser.uid);
         renderInventarioBar();
         hasChanges = false;
+        productosModificados.clear();
         document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
-        showToast(`Nuevo inventario iniciado: ${inventarioActual.nombre}`, 'success');
+        showToast(`Conteo finalizado. Nuevo inventario iniciado: ${inventarioActual.nombre}`, 'success');
     } catch (err) {
         console.error(err);
-        showToast('No se pudo iniciar un nuevo inventario.', 'error');
+        showToast('No se pudo finalizar el conteo.', 'error');
     }
 });
 
@@ -281,21 +437,25 @@ async function sincronizarItemInventario(producto) {
 }
 
 // -------------------------------
-// 3. Tabs: Cámara / Manual
+// 3. Tabs: Cámara / Código / Por nombre
 // -------------------------------
 const tabCamera = document.getElementById('tabCamera');
 const tabManual = document.getElementById('tabManual');
+const tabBuscar = document.getElementById('tabBuscar');
 const panelCamera = document.getElementById('panelCamera');
 const panelManual = document.getElementById('panelManual');
+const panelBuscar = document.getElementById('panelBuscar');
 
 function activarTab(nombre) {
-    const esCamera = nombre === 'camera';
-    tabCamera.classList.toggle('is-active', esCamera);
-    tabManual.classList.toggle('is-active', !esCamera);
-    panelCamera.style.display = esCamera ? '' : 'none';
-    panelManual.style.display = esCamera ? 'none' : '';
+    tabCamera.classList.toggle('is-active', nombre === 'camera');
+    tabManual.classList.toggle('is-active', nombre === 'manual');
+    tabBuscar.classList.toggle('is-active', nombre === 'buscar');
 
-    if (!esCamera && isScanning) {
+    panelCamera.style.display = nombre === 'camera' ? '' : 'none';
+    panelManual.style.display = nombre === 'manual' ? '' : 'none';
+    panelBuscar.style.display = nombre === 'buscar' ? '' : 'none';
+
+    if (nombre !== 'camera' && isScanning) {
         detenerCamara();
     }
 }
@@ -304,6 +464,11 @@ tabCamera.addEventListener('click', () => activarTab('camera'));
 tabManual.addEventListener('click', () => {
     activarTab('manual');
     const input = document.getElementById('scannerInput');
+    if (!input.disabled) input.focus();
+});
+tabBuscar.addEventListener('click', () => {
+    activarTab('buscar');
+    const input = document.getElementById('buscarArticuloInput');
     if (!input.disabled) input.focus();
 });
 
@@ -319,6 +484,60 @@ document.getElementById('scannerInput').addEventListener('keypress', function (e
         this.value = '';
     }
 });
+
+// -------------------------------
+// 4b. Búsqueda manual por nombre de artículo (para productos sin código de barra)
+// -------------------------------
+const buscarArticuloInput = document.getElementById('buscarArticuloInput');
+const buscarResultados = document.getElementById('buscarResultados');
+
+function normalizarTexto(texto) {
+    return String(texto)
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // saca acentos
+}
+
+buscarArticuloInput.addEventListener('input', function () {
+    const termino = normalizarTexto(this.value.trim());
+
+    if (termino.length < 2) {
+        buscarResultados.innerHTML = '';
+        buscarResultados.classList.remove('has-items');
+        return;
+    }
+
+    const coincidencias = baseDeDatos
+        .filter(p => normalizarTexto(p.articulo).includes(termino))
+        .slice(0, 25);
+
+    renderResultadosBusqueda(coincidencias);
+});
+
+function renderResultadosBusqueda(productos) {
+    buscarResultados.classList.add('has-items');
+
+    if (productos.length === 0) {
+        buscarResultados.innerHTML = '<div class="buscar-sin-resultados">No se encontró ningún producto con ese nombre.</div>';
+        return;
+    }
+
+    buscarResultados.innerHTML = '';
+    productos.forEach(producto => {
+        const fila = document.createElement('div');
+        fila.className = 'buscar-item';
+        fila.innerHTML = `
+            <span class="buscar-item-nombre">${producto.articulo}<span class="buscar-item-codigo">${producto.codigoArt}</span></span>
+            <span class="buscar-item-stock">${producto.stock_unidad}</span>
+        `;
+        fila.addEventListener('click', () => {
+            abrirModalCantidad(producto);
+            buscarArticuloInput.value = '';
+            buscarResultados.innerHTML = '';
+            buscarResultados.classList.remove('has-items');
+        });
+        buscarResultados.appendChild(fila);
+    });
+}
 
 // -------------------------------
 // 5. Escaneo por cámara (html5-qrcode)
@@ -433,13 +652,34 @@ function procesarEscaneo(codigo) {
 // -------------------------------
 const qtyModal = document.getElementById('qtyModal');
 const qtyInput = document.getElementById('qtyInput');
+const qtyModalModeBadge = document.getElementById('qtyModalModeBadge');
+const qtyModalHint = document.getElementById('qtyModalHint');
+const qtyConfirmBtn = document.getElementById('qtyConfirm');
 
-function abrirModalCantidad(producto) {
+let modoModalCantidad = 'sumar'; // 'sumar' (delta al escanear) | 'editar' (fijar stock exacto)
+
+function abrirModalCantidad(producto, modo = 'sumar') {
     pendingProduct = producto;
+    modoModalCantidad = modo;
+
     document.getElementById('qtyModalProductName').textContent = producto.articulo;
     document.getElementById('qtyModalProductCode').textContent = producto.codigoArt;
     document.getElementById('qtyModalCurrentStock').textContent = producto.stock_unidad;
-    qtyInput.value = 1;
+
+    if (modo === 'editar') {
+        qtyModalModeBadge.textContent = 'Editar producto';
+        qtyModalModeBadge.classList.add('is-editing');
+        qtyModalHint.textContent = 'Corregí el stock: escribí el número final (no se suma, reemplaza el valor actual).';
+        qtyConfirmBtn.textContent = 'Guardar corrección';
+        qtyInput.value = producto.stock_unidad;
+    } else {
+        qtyModalModeBadge.textContent = 'Sumar / restar';
+        qtyModalModeBadge.classList.remove('is-editing');
+        qtyModalHint.textContent = 'Ingresá cuánto sumar o restar (usá números negativos para restar).';
+        qtyConfirmBtn.textContent = 'Confirmar';
+        qtyInput.value = 1;
+    }
+
     qtyModal.classList.add('open');
     setTimeout(() => { qtyInput.focus(); qtyInput.select(); }, 50);
 }
@@ -447,6 +687,7 @@ function abrirModalCantidad(producto) {
 function cerrarModalCantidad() {
     qtyModal.classList.remove('open');
     pendingProduct = null;
+    modoModalCantidad = 'sumar';
 }
 
 document.getElementById('qtyMinus').addEventListener('click', () => {
@@ -459,19 +700,35 @@ document.getElementById('qtyCancel').addEventListener('click', cerrarModalCantid
 
 document.getElementById('qtyConfirm').addEventListener('click', async () => {
     if (!pendingProduct || !currentUser) return;
-    const cantidad = parseInt(qtyInput.value, 10);
+    const valorIngresado = parseInt(qtyInput.value, 10);
 
-    if (isNaN(cantidad) || cantidad === 0) {
+    if (isNaN(valorIngresado)) {
+        showToast('Ingresá un número válido.', 'error');
+        return;
+    }
+    if (modoModalCantidad === 'sumar' && valorIngresado === 0) {
         showToast('Ingresá una cantidad válida (podés usar números negativos para restar).', 'error');
+        return;
+    }
+    if (modoModalCantidad === 'editar' && valorIngresado < 0) {
+        showToast('El stock no puede ser negativo.', 'error');
         return;
     }
 
     const producto = pendingProduct;
-    producto.stock_unidad += cantidad;
+    const modo = modoModalCantidad;
+    producto.stock_unidad = modo === 'editar' ? valorIngresado : producto.stock_unidad + valorIngresado;
 
     actualizarTablaUI(producto);
     hasChanges = true;
-    showToast(`${producto.articulo}: nuevo stock ${producto.stock_unidad}.`, 'success');
+    productosModificados.set(producto.codigoArt, producto);
+    guardarCacheCatalogo(currentUser.uid);
+    showToast(
+        modo === 'editar'
+            ? `${producto.articulo}: stock corregido a ${producto.stock_unidad}.`
+            : `${producto.articulo}: nuevo stock ${producto.stock_unidad}.`,
+        'success'
+    );
     cerrarModalCantidad();
 
     const ok = await actualizarStockProducto(currentUser.uid, producto.codigoArt, producto.stock_unidad);
@@ -543,6 +800,8 @@ document.getElementById('npConfirm').addEventListener('click', async () => {
     baseDeDatos.push(nuevoProducto);
     actualizarTablaUI(nuevoProducto);
     hasChanges = true;
+    productosModificados.set(nuevoProducto.codigoArt, nuevoProducto);
+    guardarCacheCatalogo(currentUser.uid);
 
     cerrarModalProductoNuevo();
     showToast(`${descripcion}: producto nuevo agregado con stock ${stockInicial}.`, 'success');
@@ -564,6 +823,11 @@ document.getElementById('npDescripcion').addEventListener('keypress', (e) => {
 // -------------------------------
 // 9. Actualizar el historial visual
 // -------------------------------
+function cssEscape(valor) {
+    if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(valor);
+    return String(valor).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+}
+
 function actualizarTablaUI(producto) {
     const tbody = document.getElementById('scannedTable');
 
@@ -571,7 +835,13 @@ function actualizarTablaUI(producto) {
         tbody.innerHTML = '';
     }
 
+    // Si esta fila ya existía (ej. se está editando de nuevo), la sacamos para
+    // volver a insertarla arriba y evitar filas duplicadas del mismo producto.
+    const filaPrevia = tbody.querySelector(`tr[data-codigo="${cssEscape(producto.codigoArt)}"]`);
+    if (filaPrevia) filaPrevia.remove();
+
     const tr = document.createElement('tr');
+    tr.dataset.codigo = producto.codigoArt;
     const horaActual = new Date().toLocaleTimeString('en-US');
 
     tr.innerHTML = `
@@ -587,19 +857,153 @@ function actualizarTablaUI(producto) {
 // 10. Exportar el .txt final
 // -------------------------------
 document.getElementById('downloadBtn').addEventListener('click', function () {
-    let contenido = '';
+    if (productosModificados.size === 0) {
+        showToast('Todavía no hay productos modificados para exportar.', 'error');
+        return;
+    }
 
-    baseDeDatos.forEach(p => {
-        contenido += `${p.registrado};${p.hora};${p.codigoArt};${p.articulo};${p.unidades};${p.stock_unidad};\n`;
+    descargarTxt(generarContenidoTxt(productosModificadosACanonico()), 'avance_parcial.txt');
+    showToast(`Avance descargado: ${productosModificados.size} producto(s) modificado(s).`, 'success');
+});
+
+// -------------------------------
+// 11. Historial de conteos finalizados (.txt anteriores)
+// -------------------------------
+document.getElementById('histBuscarBtn').addEventListener('click', async function () {
+    if (!currentUser) return;
+
+    const desdeVal = document.getElementById('histDesde').value;
+    const hastaVal = document.getElementById('histHasta').value;
+    const desde = desdeVal ? new Date(`${desdeVal}T00:00:00`) : null;
+    const hasta = hastaVal ? new Date(`${hastaVal}T23:59:59`) : null;
+
+    const vacio = document.getElementById('historialVacio');
+    vacio.style.display = '';
+    vacio.textContent = 'Buscando…';
+
+    try {
+        const resultados = await obtenerInventariosCerrados(currentUser.uid, desde, hasta);
+        renderHistorial(resultados);
+    } catch (err) {
+        console.error(err);
+        vacio.textContent = 'No se pudo traer el historial. Si es la primera vez, puede que falte crear un índice en Firestore: fijate en la consola del navegador, Firebase suele tirar un link para crearlo con un clic.';
+        vacio.style.display = '';
+    }
+});
+
+function renderHistorial(resultados) {
+    const lista = document.getElementById('historialLista');
+    const vacio = document.getElementById('historialVacio');
+
+    lista.querySelectorAll('.historial-item').forEach(el => el.remove());
+
+    if (resultados.length === 0) {
+        vacio.textContent = 'No hay conteos finalizados en ese rango de fechas.';
+        vacio.style.display = '';
+        return;
+    }
+    vacio.style.display = 'none';
+
+    resultados.forEach(inv => {
+        const items = Object.values(inv.items || {});
+        const fechaCierre = (inv.fechaCierre && typeof inv.fechaCierre.toDate === 'function')
+            ? inv.fechaCierre.toDate()
+            : null;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'historial-item';
+
+        const filasProductos = items.map(it => `
+            <tr>
+                <td>${it.descripcion}<span class="product-code">${it.codigo}</span></td>
+                <td class="stock-cell">${it.stock}</td>
+            </tr>
+        `).join('');
+
+        wrapper.innerHTML = `
+            <div class="historial-item-header">
+                <div>
+                    <div class="historial-item-nombre">${inv.nombre}</div>
+                    <div class="historial-item-meta">${fechaCierre ? fechaCierre.toLocaleString('es-AR') : '—'} · ${items.length} producto(s)</div>
+                </div>
+                <div class="historial-item-acciones">
+                    <button type="button" class="btn btn--ghost btn--sm hist-descargar">Descargar</button>
+                </div>
+            </div>
+            <div class="historial-item-productos">
+                <table>${filasProductos || '<tr><td colspan="2" class="empty-row">Sin productos</td></tr>'}</table>
+            </div>
+        `;
+
+        wrapper.querySelector('.historial-item-header').addEventListener('click', function (e) {
+            if (e.target.closest('.hist-descargar')) return;
+            wrapper.classList.toggle('is-open');
+        });
+
+        wrapper.querySelector('.hist-descargar').addEventListener('click', function (e) {
+            e.stopPropagation();
+            const itemsCanonicos = items.map(it => ({
+                registrado: '',
+                hora: '',
+                codigo: it.codigo,
+                descripcion: it.descripcion,
+                unidades: it.unidades,
+                stock: it.stock
+            }));
+            descargarTxt(generarContenidoTxt(itemsCanonicos), `inventario_${inv.id}.txt`);
+        });
+
+        lista.appendChild(wrapper);
     });
+}
 
-    const blob = new Blob([contenido], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'inventario_actualizado.txt';
-    a.click();
+function resetHistorial() {
+    document.getElementById('histDesde').value = '';
+    document.getElementById('histHasta').value = '';
+    document.querySelectorAll('.historial-item').forEach(el => el.remove());
+    const vacio = document.getElementById('historialVacio');
+    vacio.style.display = '';
+    vacio.textContent = 'Elegí un rango de fechas y tocá "Buscar conteos".';
+}
 
-    URL.revokeObjectURL(url);
-    showToast('Archivo descargado correctamente.', 'success');
+// -------------------------------
+// 12. Zona de peligro (testing): borrar catálogo e inventarios completos
+// -------------------------------
+document.getElementById('borrarTodoBtn').addEventListener('click', async function () {
+    if (!currentUser) return;
+
+    const confirmacion = prompt(`Esto borra TODOS los productos y TODOS los inventarios de ${currentUser.email}. No se puede deshacer.\n\nEscribí BORRAR para confirmar:`);
+    if (confirmacion !== 'BORRAR') {
+        showToast('Cancelado. No se borró nada.', 'info');
+        return;
+    }
+
+    const btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Borrando…';
+
+    try {
+        const productosBorrados = await borrarCatalogoCompleto(currentUser.uid);
+        const inventariosBorrados = await borrarInventariosCompleto(currentUser.uid);
+
+        borrarCacheCatalogo(currentUser.uid);
+        baseDeDatos = [];
+        hasChanges = false;
+        productosModificados.clear();
+        resetHistorial();
+        document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
+
+        inventarioActual = await crearInventario(currentUser.uid);
+        renderInventarioBar();
+
+        mostrarCargaInicial();
+
+        showToast(`Borrado completo: ${productosBorrados} producto(s) y ${inventariosBorrados} inventario(s). Ya podés subir un .txt nuevo.`, 'success');
+    } catch (err) {
+        console.error(err);
+        showToast('No se pudo completar el borrado. Revisá la consola.', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Borrar catálogo e inventarios';
+    }
 });
