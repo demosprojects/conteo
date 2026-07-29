@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Terminal de Escaneo de Stock</title>
-
+<title>Conteo+</title>
+<link rel="icon" href="logoapp.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -17,9 +17,9 @@
 <!-- Pantalla de login -->
 <div class="login-overlay" id="loginScreen">
     <div class="login-card">
-        <span class="eyebrow">Control de inventario</span>
+        <span class="eyebrow">Conteo+ | Control de inventario</span>
         <h1>Ingresá a tu cuenta</h1>
-        <p class="hint">Cada cliente tiene su propio catálogo e inventario.</p>
+        <p class="hint">Accede con las credenciales que te proporcionaron.</p>
         <form id="loginForm">
             <div class="field-group">
                 <label class="field-label" for="loginEmail">Email</label>
@@ -40,49 +40,24 @@
 
     <header class="topbar">
         <div class="brand">
-            <span class="eyebrow">Control de inventario</span>
+            <span class="eyebrow">Conteo+ | Control de inventario</span>
             <h1>Terminal de Escaneo</h1>
         </div>
         <div class="topbar-right">
-            <div class="status-badge" id="dbStatus">DB vacía · 0 productos</div>
+            <div class="status-badge" id="dbStatus">Sin productos · 0 productos</div>
             <span class="user-chip" id="userChip"></span>
             <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button">Salir</button>
         </div>
     </header>
 
-    <div class="inventory-bar">
-        <div>
-            <div class="inv-name" id="invName">—</div>
-            <div class="inv-state" id="invState">—</div>
-            <div class="inv-hint">Cuando termines de contar, tocá "Finalizar conteo": ahí se genera y descarga el .txt con lo modificado, y arranca un conteo nuevo.</div>
-        </div>
-        <button class="btn btn--amber btn--sm" id="nuevoInventarioBtn" type="button">Finalizar y descargar .txt</button>
-    </div>
+    <main class="pages" id="pages">
 
-    <main class="layout">
-
-        <!-- Columna izquierda: acciones -->
-        <section class="col">
-
+        <!-- Página: Escanear (landing por defecto) -->
+        <section class="page is-active" id="pageEscanear" data-page="escanear">
             <div class="card">
-                <span class="card__step">01 · Catálogo</span>
-                <h2>Base de datos de productos</h2>
-                <p class="hint">Este .txt se usa una única vez para la carga inicial del catálogo. Después de subirlo, el catálogo queda guardado en tu cuenta y se maneja todo desde acá: los productos nuevos que detectes al escanear se agregan solos.</p>
-
-                <div class="catalog-status" id="catalogStatus" style="display:none;">
-                    <span><strong id="catalogCount">0</strong> productos cargados en tu cuenta</span>
-                    <button type="button" class="link-btn" id="sincronizarCatalogoBtn">Sincronizar</button>
-                </div>
-
-                <div id="catalogUploadPanel">
-                    <input type="file" id="fileInput" accept=".txt" class="file-btn">
-                </div>
-            </div>
-
-            <div class="card">
-                <span class="card__step">02 · Escanear</span>
+                <span class="card__step">Escanear</span>
                 <h2>Código de barras</h2>
-                <p class="hint">Usá la cámara del dispositivo o cargá el código a mano si no se puede leer.</p>
+                <p class="hint">Usá la cámara del dispositivo o cargá el código a mano si no se puede leer. Para cargar un nuevo producto en la pestaña de Por nombre escribí el nombre y lo generas.</p>
 
                 <div class="tabs">
                     <div class="tab is-active" id="tabCamera" data-tab="camera">Cámara</div>
@@ -124,22 +99,61 @@
                     <div class="buscar-resultados" id="buscarResultados"></div>
                 </div>
             </div>
-
-            <div class="card card--export">
-                <span class="card__step">03 · Avance (opcional)</span>
-                <h2>Descargar avance parcial</h2>
-                <p class="hint">No hace falta para nada: el .txt definitivo se genera solo al tocar "Finalizar y descargar .txt". Usá esto solo si necesitás bajar un adelanto a mitad de conteo.</p>
-                <button id="downloadBtn" class="btn btn--ghost btn--full" disabled>Descargar avance parcial</button>
-            </div>
-
         </section>
 
-        <!-- Columna derecha: registro -->
-        <section class="col">
+        <!-- Página: Productos (catálogo completo) -->
+        <section class="page" id="pageProductos" data-page="productos">
+            <div class="card log-card" id="productsCard">
+                <span class="card__step">Catálogo</span>
+                <h2>Todos los productos</h2>
+                <p class="hint">Buscá por nombre o código. Tocá el nombre de un producto para corregir su stock.</p>
+
+                <div class="catalog-status" id="catalogStatus" style="display:none;">
+                    <span><strong id="catalogCount">0</strong> productos cargados en tu cuenta</span>
+                    <button type="button" class="link-btn" id="sincronizarCatalogoBtn">Sincronizar</button>
+                </div>
+
+                <div id="catalogUploadPanel">
+                    <p class="hint">Subí el .txt con el catálogo inicial (paso único: después queda guardado en tu cuenta y los productos nuevos se agregan solos al escanear).</p>
+                    <input type="file" id="fileInput" accept=".txt" class="file-btn">
+                </div>
+
+                <input type="text" id="productsSearchInput" class="manual-input" placeholder="Buscar por nombre o código…" autocomplete="off" style="margin-bottom:12px;">
+                <div class="log-table-wrap">
+                    <table class="log-table">
+                        <thead>
+                            <tr>
+                                <th>Artículo</th>
+                                <th class="text-center">Stock</th>
+                            </tr>
+                        </thead>
+                        <tbody id="productsTableBody">
+                            <tr><td colspan="2" class="empty-row">Subí el catálogo para ver los productos</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Página: Conteo (registro del conteo actual) -->
+        <section class="page" id="pageConteo" data-page="conteo">
+            <div class="inventory-bar">
+                <div>
+                    <div class="inv-name" id="invName">—</div>
+                    <div class="inv-state" id="invState">—</div>
+                    <div class="inv-hint">Primero tocá "Sincronizar" para traer los últimos cambios; recién ahí se habilita la descarga del archivo final.</div>
+                </div>
+                <div class="inventory-actions">
+                    <span class="sync-badge" id="syncBadge">Sin sincronizar</span>
+                    <button class="btn btn--ghost btn--sm" id="sincronizarConteoBtn" type="button">Sincronizar</button>
+                    <button class="btn btn--amber btn--sm" id="nuevoInventarioBtn" type="button" disabled>Finalizar</button>
+                </div>
+            </div>
+
             <div class="card log-card">
                 <span class="card__step">Registro</span>
                 <h2>Modificaciones</h2>
-                <p class="hint">¿Te equivocaste al escanear? Tocá la fila del producto para corregir el stock.</p>
+                <p class="hint">¿Te equivocaste al escanear? Tocá el nombre del producto para corregir el stock.</p>
                 <div class="log-table-wrap">
                     <table class="log-table">
                         <thead>
@@ -156,9 +170,19 @@
                 </div>
             </div>
 
+            <div class="card card--export">
+                <span class="card__step">Avance (opcional)</span>
+                <h2>Descargar avance parcial</h2>
+                <p class="hint">Usá esto solo si necesitás bajar un adelanto a mitad de conteo. Sincroniza los cambios y toca en el botón de "Descargar avance parcial".</p>
+                <button id="downloadBtn" class="btn btn--ghost btn--full" disabled>Descargar avance parcial</button>
+            </div>
+        </section>
+
+        <!-- Página: Más (historial y ajustes) -->
+        <section class="page" id="pageMas" data-page="mas">
             <div class="card" id="historialCard">
                 <span class="card__step">Historial</span>
-                <h2>Conteos anteriores (.txt)</h2>
+                <h2>Conteos anteriores</h2>
                 <p class="hint">Buscá por fecha los conteos ya finalizados y volvé a descargar o revisar los productos de cualquiera.</p>
 
                 <div class="historial-filtros">
@@ -190,6 +214,27 @@
         </section>
 
     </main>
+
+    <!-- Navegación inferior (pensada para uso con una mano en celular) -->
+    <nav class="bottom-nav" id="bottomNav">
+        <button class="nav-btn is-active" data-page="escanear" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+            <span>Escanear</span>
+        </button>
+        <button class="nav-btn" data-page="productos" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
+            <span>Productos</span>
+        </button>
+        <button class="nav-btn" data-page="conteo" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span>Conteo</span>
+            <span class="nav-badge" id="navConteoBadge" style="display:none;">0</span>
+        </button>
+        <button class="nav-btn" data-page="mas" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+            <span>Más</span>
+        </button>
+    </nav>
 </div>
 
 <!-- Modal de cantidad (producto conocido) -->
@@ -214,11 +259,11 @@
     </div>
 </div>
 
-<!-- Modal de producto nuevo (código no encontrado) -->
+<!-- Modal de producto nuevo (código no encontrado, o alta manual sin código) -->
 <div class="modal-overlay" id="newProductModal">
     <div class="modal">
-        <h3>Producto no encontrado</h3>
-        <p class="modal-code">Código escaneado: <span id="npCodigo">—</span></p>
+        <h3>Producto nuevo</h3>
+        <p class="modal-code">Código: <span id="npCodigo">—</span></p>
 
         <div class="field-group">
             <label class="field-label" for="npDescripcion">Descripción</label>
@@ -236,6 +281,37 @@
         <div class="modal-actions">
             <button class="btn btn--ghost btn--full" id="npCancel" type="button">Cancelar</button>
             <button class="btn btn--primary btn--full" id="npConfirm" type="button">Agregar producto</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de confirmación genérica (reemplaza a confirm()) -->
+<div class="modal-overlay" id="confirmModal">
+    <div class="modal modal--confirm">
+        <h3 id="confirmModalTitle">¿Confirmás?</h3>
+        <p class="confirm-message" id="confirmModalMessage"></p>
+
+        <div class="modal-actions">
+            <button class="btn btn--ghost btn--full" id="confirmModalCancel" type="button">Cancelar</button>
+            <button class="btn btn--primary btn--full" id="confirmModalConfirm" type="button">Confirmar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de confirmación peligrosa, requiere escribir una palabra (reemplaza a prompt()) -->
+<div class="modal-overlay" id="dangerModal">
+    <div class="modal modal--confirm modal--danger">
+        <h3 id="dangerModalTitle">Zona de peligro</h3>
+        <p class="confirm-message" id="dangerModalMessage"></p>
+
+        <div class="field-group">
+            <label class="field-label" id="dangerModalInputLabel" for="dangerModalInput">Escribí BORRAR para confirmar</label>
+            <input type="text" id="dangerModalInput" class="manual-input" autocomplete="off" placeholder="BORRAR">
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn--ghost btn--full" id="dangerModalCancel" type="button">Cancelar</button>
+            <button class="btn btn--danger btn--full" id="dangerModalConfirm" type="button" disabled>Confirmar</button>
         </div>
     </div>
 </div>
