@@ -3,13 +3,13 @@ import {
     onAuthChange,
     loginUsuario,
     logoutUsuario,
-    obtenerCatalogo,
+    escucharCatalogo,
     importarCatalogo,
     crearProducto,
     eliminarProducto,
     actualizarStockProducto,
-    obtenerInventarioAbierto,
-    crearInventario,
+    asegurarInventarioActual,
+    escucharInventarioActual,
     cerrarInventario,
     actualizarItemInventario,
     eliminarItemInventario,
@@ -24,7 +24,8 @@ let pendingProduct = null;
 let pendingScanCode = null;
 let currentUser = null;
 let inventarioActual = null; // { id, nombre, estado, items }
-let catalogoSincronizado = false; // controla si se habilita el botón "Finalizar"
+let unsubCatalogo = null;    // función para dejar de escuchar el catálogo (onSnapshot)
+let unsubInventario = null;  // función para dejar de escuchar el inventario actual (onSnapshot)
 
 // Solo los productos que se modificaron en el conteo actual (para exportar el .txt)
 const productosModificados = new Map();
@@ -76,38 +77,6 @@ function normalizarCodigoProducto(producto) {
         producto.codigoArt = codigoInternoDesdeDescripcion(producto.articulo);
     }
     return producto;
-}
-
-// -------------------------------
-// Caché local del catálogo (evita re-leer TODOS los productos de Firestore
-// en cada carga de página; eso es lo que satura la cuota del plan gratis)
-// -------------------------------
-function claveCache(uid) {
-    return `catalogo_cache_${uid}`;
-}
-
-function guardarCacheCatalogo(uid) {
-    try {
-        localStorage.setItem(claveCache(uid), JSON.stringify(baseDeDatos));
-    } catch (e) {
-        console.warn('No se pudo guardar el caché local del catálogo:', e);
-    }
-}
-
-function leerCacheCatalogo(uid) {
-    try {
-        const raw = localStorage.getItem(claveCache(uid));
-        return raw ? JSON.parse(raw) : null;
-    } catch (e) {
-        console.warn('No se pudo leer el caché local del catálogo:', e);
-        return null;
-    }
-}
-
-function borrarCacheCatalogo(uid) {
-    try {
-        localStorage.removeItem(claveCache(uid));
-    } catch (e) { /* noop */ }
 }
 
 // -------------------------------
@@ -271,65 +240,74 @@ onAuthChange(async function (user) {
 });
 
 async function inicializarSesion(uid) {
-    try {
-        // 1) Primero miramos si ya tenemos el catálogo cacheado en este dispositivo.
-        //    Si existe, lo usamos directo y NO leemos Firestore (ahorra cientos/miles
-        //    de lecturas cada vez que se abre o se recarga la página).
-        const cache = leerCacheCatalogo(uid);
-        if (cache && cache.length > 0) {
-            baseDeDatos = cache.map(normalizarCodigoProducto);
+    let primeraFotoCatalogo = true;
+
+    // Catálogo: un único listener en tiempo real por sesión. Cada vez que
+    // CUALQUIER dispositivo logueado con esta cuenta da de alta, edita o
+    // borra un producto, este callback se dispara solo en TODOS los
+    // dispositivos conectados — no hace falta tocar ningún botón de
+    // sincronizar, y todos terminan mostrando siempre el mismo número de
+    // productos.
+    unsubCatalogo = escucharCatalogo(uid, (catalogo) => {
+        baseDeDatos = catalogo.map(p => normalizarCodigoProducto({
+            registrado: '',
+            hora: '',
+            codigoArt: p.codigo,
+            articulo: p.descripcion || '(sin descripción)',
+            unidades: p.unidades || '',
+            stock_unidad: p.stock || 0
+        }));
+
+        if (baseDeDatos.length > 0) {
             mostrarCatalogoListo();
         } else {
-            // 2) Sin caché (primera vez en este dispositivo, o se limpió el caché):
-            //    ahí sí bajamos todo el catálogo de Firestore, una sola vez, y lo guardamos.
-            const catalogo = await obtenerCatalogo(uid);
-            if (catalogo.length > 0) {
-                baseDeDatos = catalogo.map(p => normalizarCodigoProducto({
-                    registrado: '',
-                    hora: '',
-                    codigoArt: p.codigo,
-                    articulo: p.descripcion || '(sin descripción)',
-                    unidades: p.unidades || '',
-                    stock_unidad: p.stock || 0
-                }));
-                guardarCacheCatalogo(uid);
-                mostrarCatalogoListo();
-                marcarSincronizado(); // ya vino fresco de Firestore, no hace falta re-sincronizar
-            } else {
-                mostrarCargaInicial();
-            }
+            mostrarCargaInicial();
         }
-    } catch (err) {
-        console.error(err);
-        showToast('No se pudo cargar el catálogo desde Firebase.', 'error');
-    }
 
-    try {
-        let inv = await obtenerInventarioAbierto(uid);
-        if (!inv) {
-            inv = await crearInventario(uid);
+        // Reordenamos la tabla de "Modificaciones" con el stock más fresco
+        // por si cambió algo mientras el conteo estaba abierto.
+        if (inventarioActual) {
+            sincronizarItemsDesdeInventario(inventarioActual.items || {});
         }
-        inventarioActual = inv;
-        renderInventarioBar();
-        cargarItemsExistentes(inv.items || {});
+
+        if (primeraFotoCatalogo) {
+            primeraFotoCatalogo = false;
+            activarPagina(baseDeDatos.length === 0 ? 'productos' : 'escanear');
+        }
+    }, () => {
+        showToast('No se pudo sincronizar el catálogo. Revisá tu conexión.', 'error');
+    });
+
+    // Inventario "actual": mismo esquema. Al ID fijo (uid + "_actual") todos
+    // los dispositivos apuntan al mismo documento, así que un escaneo hecho
+    // desde el celular aparece también en la PC, y viceversa, sin recargar.
+    try {
+        await asegurarInventarioActual(uid);
     } catch (err) {
         console.error(err);
         showToast('No se pudo abrir el inventario del día.', 'error');
     }
 
-    // Si todavía no hay catálogo cargado, arrancamos en "Productos" para que
-    // vea el panel de carga inicial; si ya hay catálogo, vamos directo a escanear.
-    activarPagina(baseDeDatos.length === 0 ? 'productos' : 'escanear');
+    unsubInventario = escucharInventarioActual(uid, (inv) => {
+        if (!inv) return; // todavía no se creó / se está creando
+        inventarioActual = inv;
+        renderInventarioBar();
+        sincronizarItemsDesdeInventario(inv.items || {});
+    }, () => {
+        showToast('No se pudo sincronizar el inventario. Revisá tu conexión.', 'error');
+    });
 }
 
 function resetEstadoApp() {
+    if (unsubCatalogo) { unsubCatalogo(); unsubCatalogo = null; }
+    if (unsubInventario) { unsubInventario(); unsubInventario = null; }
+
     baseDeDatos = [];
     hasChanges = false;
     productosModificados.clear();
     stockOriginalPorCodigo.clear();
     productosNuevosEnEsteConteo.clear();
     actualizarBadgeConteo();
-    marcarPendienteDeSincronizar();
     inventarioActual = null;
     document.getElementById('scannedTable').innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
     productsSearchInput.value = '';
@@ -337,7 +315,7 @@ function resetEstadoApp() {
     resetHistorial();
     deshabilitarEscaneo();
     const dbStatus = document.getElementById('dbStatus');
-    dbStatus.innerText = 'DB vacía · 0 productos';
+    dbStatus.innerText = 'Sin productos · 0 productos';
     dbStatus.classList.remove('is-ready');
     if (isScanning) detenerCamara();
     activarPagina('escanear');
@@ -362,7 +340,7 @@ function mostrarCatalogoListo() {
 
 function mostrarCargaInicial() {
     const dbStatus = document.getElementById('dbStatus');
-    dbStatus.innerText = 'DB vacía · subí el catálogo inicial';
+    dbStatus.innerText = 'Sin productos · subí el catálogo inicial';
     dbStatus.classList.remove('is-ready');
 
     document.getElementById('catalogUploadPanel').style.display = '';
@@ -387,89 +365,35 @@ function deshabilitarEscaneo() {
 }
 
 // -------------------------------
-// 1b. Estado de sincronización: el botón "Finalizar" se
-// habilita SOLO después de sincronizar, para asegurarnos de exportar con el
-// catálogo/inventario al día. Cualquier cambio local lo vuelve a marcar como
-// pendiente, para forzar a sincronizar de nuevo antes de descargar.
+// 1b. Estado de sincronización: ahora es automático (listeners en tiempo
+// real de Firestore), así que el botón "Finalizar" se habilita apenas hay
+// catálogo e inventario cargados — ya no hace falta un paso manual de
+// "Sincronizar" antes de poder finalizar/descargar.
 // -------------------------------
-function marcarPendienteDeSincronizar() {
-    catalogoSincronizado = false;
-    actualizarEstadoDescarga();
-}
-
-function marcarSincronizado() {
-    catalogoSincronizado = true;
-    actualizarEstadoDescarga();
-}
-
 function actualizarEstadoDescarga() {
     const nuevoInventarioBtn = document.getElementById('nuevoInventarioBtn');
     const syncBadge = document.getElementById('syncBadge');
 
-    nuevoInventarioBtn.disabled = !(catalogoSincronizado && baseDeDatos.length > 0 && inventarioActual);
+    nuevoInventarioBtn.disabled = !(baseDeDatos.length > 0 && inventarioActual);
 
-    syncBadge.textContent = catalogoSincronizado ? 'Sincronizado' : 'Sin sincronizar';
-    syncBadge.classList.toggle('is-synced', catalogoSincronizado);
-}
-
-// Trae el catálogo fresco de Firestore (por ejemplo si otro dispositivo/local
-// modificó stock) y renueva el caché local. Devuelve true/false según éxito.
-async function sincronizarCatalogoDesdeFirebase() {
-    if (!currentUser) return false;
-    try {
-        const catalogo = await obtenerCatalogo(currentUser.uid);
-        baseDeDatos = catalogo.map(p => normalizarCodigoProducto({
-            registrado: '',
-            hora: '',
-            codigoArt: p.codigo,
-            articulo: p.descripcion || '(sin descripción)',
-            unidades: p.unidades || '',
-            stock_unidad: p.stock || 0
-        }));
-        guardarCacheCatalogo(currentUser.uid);
-        document.getElementById('catalogCount').textContent = baseDeDatos.length;
-        document.getElementById('dbStatus').innerText = `Productos cargados · ${baseDeDatos.length} productos`;
-        renderTablaProductos();
-        return true;
-    } catch (err) {
-        console.error(err);
-        return false;
+    if (syncBadge) {
+        syncBadge.textContent = 'Sincronizado';
+        syncBadge.classList.add('is-synced');
     }
 }
 
-// Botón "Sincronizar" dentro de la tarjeta de catálogo (pestaña Productos)
-document.getElementById('sincronizarCatalogoBtn').addEventListener('click', async function () {
-    if (!currentUser) return;
-    showToast('Sincronizando catálogo con Firebase…', 'info');
-    const ok = await sincronizarCatalogoDesdeFirebase();
-    if (ok) {
-        marcarSincronizado();
-        showToast('Catálogo sincronizado.', 'success');
-    } else {
-        showToast('No se pudo sincronizar el catálogo.', 'error');
-    }
+// Los botones "Sincronizar" quedan como acción manual opcional: con los
+// listeners en tiempo real ya no hace falta tocarlos para que los datos
+// estén al día, pero los dejamos funcionando (por si alguien los toca por
+// costumbre, o para forzar un refresco visual de la tabla).
+document.getElementById('sincronizarCatalogoBtn').addEventListener('click', function () {
+    renderTablaProductos();
+    showToast('El catálogo ya se sincroniza solo en tiempo real. Esto está al día.', 'info');
 });
 
-// Botón "Sincronizar" junto a "Finalizar" (pestaña Conteo):
-// Sincronizo -------> Descargo
-document.getElementById('sincronizarConteoBtn').addEventListener('click', async function () {
-    if (!currentUser) return;
-    const btn = this;
-    const textoOriginal = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Sincronizando…';
-
-    const ok = await sincronizarCatalogoDesdeFirebase();
-
-    btn.disabled = false;
-    btn.textContent = textoOriginal;
-
-    if (ok) {
-        marcarSincronizado();
-        showToast('Todo sincronizado. Ya podés descargar el .txt.', 'success');
-    } else {
-        showToast('No se pudo sincronizar. Probá de nuevo antes de descargar.', 'error');
-    }
+document.getElementById('sincronizarConteoBtn').addEventListener('click', function () {
+    if (inventarioActual) sincronizarItemsDesdeInventario(inventarioActual.items || {});
+    showToast('El conteo ya se sincroniza solo en tiempo real. Esto está al día.', 'info');
 });
 
 document.getElementById('fileInput').addEventListener('change', function (e) {
@@ -534,18 +458,19 @@ async function parseTxtYSubir(text) {
         return;
     }
 
-    showToast('Subiendo catálogo a Firebase, puede tardar unos segundos…', 'info');
+    showToast('Subiendo catálogo, puede tardar unos segundos…', 'info');
 
     try {
         await importarCatalogo(currentUser.uid, productos);
-        baseDeDatos = productos;
-        guardarCacheCatalogo(currentUser.uid);
+        // No hace falta tocar baseDeDatos ni caché a mano: el listener en
+        // tiempo real de escucharCatalogo() va a traer estos productos solo,
+        // en todos los dispositivos conectados.
         mostrarCatalogoListo();
         showToast(`Catálogo cargado: ${productos.length} productos.`, 'success');
         activarPagina('escanear');
     } catch (err) {
         console.error(err);
-        showToast('No se pudo subir el catálogo a Firebase.', 'error');
+        showToast('No se pudo subir el catálogo.', 'error');
     }
 }
 
@@ -557,28 +482,51 @@ function renderInventarioBar() {
     document.getElementById('invState').textContent = inventarioActual.estado;
 }
 
-function cargarItemsExistentes(items) {
+// Reconstruye por completo la tabla de "Modificaciones" y el Map en memoria
+// (productosModificados) a partir del mapa "items" del inventario actual en
+// Firestore. Se llama cada vez que llega una actualización del listener en
+// tiempo real (escucharInventarioActual), no solo al arrancar la sesión —
+// así, si escaneás un producto desde el celular, aparece solo en la tabla de
+// la PC (y viceversa), sin recargar la página. También se llama con un mapa
+// vacío al finalizar un conteo, para limpiar la tabla en todos los
+// dispositivos apenas se cierra.
+function sincronizarItemsDesdeInventario(items) {
     const entradas = Object.values(items || {});
-    if (entradas.length === 0) return;
-
     const tbody = document.getElementById('scannedTable');
-    tbody.innerHTML = ''; // saca el placeholder "No hay modificaciones recientes"
+
+    productosModificados.clear();
+    tbody.innerHTML = '';
+
+    if (entradas.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
+        actualizarBadgeConteo();
+        return;
+    }
 
     entradas.forEach(item => {
         const tr = document.createElement('tr');
         tr.dataset.codigo = item.codigo;
         tr.innerHTML = `
-            <td class="time-cell">—</td>
+            <td class="time-cell">${item.hora || '—'}</td>
             <td>${item.descripcion}<span class="product-code">${item.codigo}</span></td>
             <td class="stock-cell">${item.stock}</td>
             <td class="action-cell"><button type="button" class="row-delete-btn" data-accion="eliminar" title="Revertir / eliminar">✕</button></td>
         `;
         tbody.appendChild(tr);
 
-        // Estos productos ya se habían modificado en este conteo (ej. se recargó
-        // la página a mitad de jornada): los sumamos para que entren en el .txt.
-        const producto = baseDeDatos.find(p => p.codigoArt === item.codigo);
-        if (producto) productosModificados.set(item.codigo, producto);
+        // Preferimos el producto tal como está en baseDeDatos (catálogo ya
+        // sincronizado) para que el .txt final salga con el stock más
+        // fresco; si por algún motivo todavía no llegó al catálogo local,
+        // usamos directamente lo que dice el item del inventario.
+        const producto = baseDeDatos.find(p => p.codigoArt === item.codigo) || {
+            codigoArt: item.codigo,
+            articulo: item.descripcion,
+            unidades: item.unidades,
+            stock_unidad: item.stock,
+            registrado: '',
+            hora: ''
+        };
+        productosModificados.set(item.codigo, producto);
     });
     actualizarBadgeConteo();
     hasChanges = true;
@@ -657,12 +605,10 @@ async function eliminarModificacion(codigo, fila) {
         if (inventarioActual) {
             await eliminarItemInventario(inventarioActual.id, codigo);
         }
-        guardarCacheCatalogo(currentUser.uid);
-        marcarPendienteDeSincronizar();
         showToast(esNuevo ? `"${nombre}" eliminado.` : `"${nombre}" revertido.`, 'success');
     } catch (err) {
         console.error(err);
-        showToast('Hubo un problema al sincronizar la reversión con Firebase.', 'error');
+        showToast('Hubo un problema al sincronizar la reversión.', 'error');
     }
 }
 
@@ -695,17 +641,16 @@ document.getElementById('nuevoInventarioBtn').addEventListener('click', async fu
             descargarTxt(generarContenidoTxt(productosModificadosACanonico()), 'inventario_actualizado.txt');
         }
 
-        await cerrarInventario(inventarioActual.id);
-        inventarioActual = await crearInventario(currentUser.uid);
-        renderInventarioBar();
-        hasChanges = false;
-        productosModificados.clear();
+        // cerrarInventario archiva el conteo actual en el Historial y
+        // resetea el mismo documento "actual" para el próximo conteo, todo
+        // en una transacción atómica. No hace falta crear nada a mano: el
+        // listener de escucharInventarioActual va a recibir el reseteo solo
+        // (en este dispositivo y en cualquier otro conectado) y va a limpiar
+        // la tabla de "Modificaciones" automáticamente.
+        await cerrarInventario(currentUser.uid);
         stockOriginalPorCodigo.clear();
         productosNuevosEnEsteConteo.clear();
-        actualizarBadgeConteo();
-        marcarPendienteDeSincronizar();
-        document.getElementById('scannedTable').innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
-        showToast(`Conteo finalizado. Nuevo inventario iniciado: ${inventarioActual.nombre}`, 'success');
+        showToast('Conteo finalizado. Nuevo conteo iniciado.', 'success');
     } catch (err) {
         console.error(err);
         showToast('No se pudo finalizar el conteo.', 'error');
@@ -714,14 +659,16 @@ document.getElementById('nuevoInventarioBtn').addEventListener('click', async fu
 
 async function sincronizarItemInventario(producto) {
     if (!inventarioActual) return;
+    const horaActual = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     const ok = await actualizarItemInventario(inventarioActual.id, producto.codigoArt, {
         codigo: producto.codigoArt,
         descripcion: producto.articulo,
         unidades: producto.unidades,
-        stock: producto.stock_unidad
+        stock: producto.stock_unidad,
+        hora: horaActual
     });
     if (!ok) {
-        showToast(`No se pudo sincronizar "${producto.articulo}" con el inventario en Firebase.`, 'error');
+        showToast(`No se pudo sincronizar "${producto.articulo}" con el inventario.`, 'error');
     }
 }
 
@@ -931,7 +878,6 @@ async function eliminarProductoDelCatalogo(codigo) {
         productosModificados.delete(codigo);
         stockOriginalPorCodigo.delete(codigo);
         productosNuevosEnEsteConteo.delete(codigo);
-        guardarCacheCatalogo(currentUser.uid);
         document.getElementById('catalogCount').textContent = baseDeDatos.length;
         document.getElementById('dbStatus').innerText = `Productos cargados · ${baseDeDatos.length} productos`;
         renderTablaProductos();
@@ -939,7 +885,7 @@ async function eliminarProductoDelCatalogo(codigo) {
         showToast(`"${nombre}" eliminado del catálogo.`, 'success');
     } catch (err) {
         console.error(err);
-        showToast('No se pudo eliminar el producto de Firebase.', 'error');
+        showToast('No se pudo eliminar el producto.', 'error');
     }
 }
 
@@ -1134,8 +1080,6 @@ document.getElementById('qtyConfirm').addEventListener('click', async () => {
     hasChanges = true;
     productosModificados.set(producto.codigoArt, producto);
     actualizarBadgeConteo();
-    marcarPendienteDeSincronizar();
-    guardarCacheCatalogo(currentUser.uid);
     renderTablaProductos();
     showToast(
         modo === 'editar'
@@ -1318,8 +1262,6 @@ document.getElementById('npConfirm').addEventListener('click', async () => {
     productosModificados.set(nuevoProducto.codigoArt, nuevoProducto);
     productosNuevosEnEsteConteo.add(nuevoProducto.codigoArt);
     actualizarBadgeConteo();
-    marcarPendienteDeSincronizar();
-    guardarCacheCatalogo(currentUser.uid);
     renderTablaProductos();
 
     cerrarModalProductoNuevo();
@@ -1332,7 +1274,7 @@ document.getElementById('npConfirm').addEventListener('click', async () => {
         await sincronizarItemInventario(nuevoProducto);
     } catch (err) {
         console.error(err);
-        showToast('El producto se guardó localmente pero no se pudo sincronizar con Firebase.', 'error');
+        showToast('El producto se guardó localmente pero no se pudo sincronizar con la base de datos.', 'error');
     }
 });
 
@@ -1407,7 +1349,7 @@ async function buscarHistorial() {
         renderHistorial(resultados);
     } catch (err) {
         console.error(err);
-        vacio.textContent = 'No se pudo traer el historial. Si es la primera vez, puede que falte crear un índice en Firestore: fijate en la consola del navegador, Firebase suele tirar un link para crearlo con un clic.';
+        vacio.textContent = 'No se pudo traer el historial.';
         vacio.style.display = '';
     }
 }
@@ -1511,25 +1453,20 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
 
     try {
         const productosBorrados = await borrarCatalogoCompleto(currentUser.uid);
+        // Esto también borra el documento "inventarios/{uid}_actual" — hay
+        // que recrearlo después, si no la app se queda sin inventario activo.
         const inventariosBorrados = await borrarInventariosCompleto(currentUser.uid);
 
-        borrarCacheCatalogo(currentUser.uid);
-        baseDeDatos = [];
         hasChanges = false;
-        productosModificados.clear();
         stockOriginalPorCodigo.clear();
         productosNuevosEnEsteConteo.clear();
-        actualizarBadgeConteo();
-        marcarPendienteDeSincronizar();
         resetHistorial();
-        document.getElementById('scannedTable').innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
         productsSearchInput.value = '';
-        renderTablaProductos();
+        // baseDeDatos, productosModificados, la tabla de escaneos y el badge
+        // se actualizan solos: los listeners de catálogo e inventario van a
+        // recibir la limpieza (0 productos, 0 items) y redibujar todo.
 
-        inventarioActual = await crearInventario(currentUser.uid);
-        renderInventarioBar();
-
-        mostrarCargaInicial();
+        await asegurarInventarioActual(currentUser.uid);
 
         showToast(`Borrado completo: ${productosBorrados} producto(s) y ${inventariosBorrados} inventario(s). Ya podés subir un .txt nuevo.`, 'success');
     } catch (err) {
