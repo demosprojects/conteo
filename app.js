@@ -6,11 +6,13 @@ import {
     obtenerCatalogo,
     importarCatalogo,
     crearProducto,
+    eliminarProducto,
     actualizarStockProducto,
     obtenerInventarioAbierto,
     crearInventario,
     cerrarInventario,
     actualizarItemInventario,
+    eliminarItemInventario,
     obtenerInventariosCerrados,
     borrarCatalogoCompleto,
     borrarInventariosCompleto
@@ -26,6 +28,16 @@ let catalogoSincronizado = false; // controla si se habilita el botón "Finaliza
 
 // Solo los productos que se modificaron en el conteo actual (para exportar el .txt)
 const productosModificados = new Map();
+
+// Stock que tenía cada producto ANTES de su primera modificación en este
+// conteo (codigoArt -> stock original). Permite revertir un escaneo/edición
+// por error desde "Modificaciones" sin perder el valor previo real.
+const stockOriginalPorCodigo = new Map();
+
+// Códigos de productos que se dieron de alta (nuevos) durante este conteo,
+// no existían antes en el catálogo. No tienen "stock original" al que volver:
+// eliminarlos borra el producto directamente.
+const productosNuevosEnEsteConteo = new Set();
 
 // Genera un código interno ESTABLE (no aleatorio) para productos sin código de
 // barras, a partir de su descripción. El mismo producto siempre cae en el mismo
@@ -314,12 +326,14 @@ function resetEstadoApp() {
     baseDeDatos = [];
     hasChanges = false;
     productosModificados.clear();
+    stockOriginalPorCodigo.clear();
+    productosNuevosEnEsteConteo.clear();
     actualizarBadgeConteo();
     marcarPendienteDeSincronizar();
     inventarioActual = null;
-    document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
+    document.getElementById('scannedTable').innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
     productsSearchInput.value = '';
-    productsTableBody.innerHTML = '<tr><td colspan="2" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
+    productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
     resetHistorial();
     deshabilitarEscaneo();
     const dbStatus = document.getElementById('dbStatus');
@@ -414,6 +428,7 @@ async function sincronizarCatalogoDesdeFirebase() {
         }));
         guardarCacheCatalogo(currentUser.uid);
         document.getElementById('catalogCount').textContent = baseDeDatos.length;
+        document.getElementById('dbStatus').innerText = `Productos cargados · ${baseDeDatos.length} productos`;
         renderTablaProductos();
         return true;
     } catch (err) {
@@ -556,6 +571,7 @@ function cargarItemsExistentes(items) {
             <td class="time-cell">—</td>
             <td>${item.descripcion}<span class="product-code">${item.codigo}</span></td>
             <td class="stock-cell">${item.stock}</td>
+            <td class="action-cell"><button type="button" class="row-delete-btn" data-accion="eliminar" title="Revertir / eliminar">✕</button></td>
         `;
         tbody.appendChild(tr);
 
@@ -568,19 +584,87 @@ function cargarItemsExistentes(items) {
     hasChanges = true;
 }
 
-document.getElementById('scannedTable').addEventListener('click', function (e) {
+document.getElementById('scannedTable').addEventListener('click', async function (e) {
     const fila = e.target.closest('tr[data-codigo]');
     if (!fila) return;
-
     const codigo = fila.dataset.codigo;
-    const producto = baseDeDatos.find(p => p.codigoArt === codigo);
 
+    // Click en el botón "✕": revertir la modificación o borrar el producto.
+    if (e.target.closest('[data-accion="eliminar"]')) {
+        await eliminarModificacion(codigo, fila);
+        return;
+    }
+
+    // Click en cualquier otro lugar de la fila: abrir modal para corregir el stock.
+    const producto = baseDeDatos.find(p => p.codigoArt === codigo);
     if (!producto) {
         showToast('No se encontró este producto en el catálogo para editarlo.', 'error');
         return;
     }
     abrirModalCantidad(producto, 'editar');
 });
+
+// Revierte una fila de "Modificaciones": si el producto ya existía en el
+// catálogo, vuelve su stock al valor previo a este conteo; si se dio de alta
+// recién en este conteo, lo borra directamente (nunca existió antes).
+async function eliminarModificacion(codigo, fila) {
+    if (!currentUser) return;
+
+    const esNuevo = productosNuevosEnEsteConteo.has(codigo);
+    const producto = baseDeDatos.find(p => p.codigoArt === codigo);
+    const nombre = producto ? producto.articulo : codigo;
+
+    const mensaje = esNuevo
+        ? `"${nombre}" se dio de alta en este conteo. Se va a borrar del catálogo por completo. ¿Confirmás?`
+        : `Se va a revertir el stock de "${nombre}" al valor que tenía antes de este conteo y se va a sacar de la lista. ¿Confirmás?`;
+    const confirmado = await mostrarConfirm({
+        titulo: esNuevo ? 'Eliminar producto' : 'Revertir modificación',
+        mensaje,
+        textoConfirmar: esNuevo ? 'Eliminar' : 'Revertir'
+    });
+    if (!confirmado) return;
+
+    fila.remove();
+    productosModificados.delete(codigo);
+    actualizarBadgeConteo();
+    if (productosModificados.size === 0) {
+        document.getElementById('scannedTable').innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
+        hasChanges = false;
+    }
+
+    try {
+        if (esNuevo) {
+            baseDeDatos = baseDeDatos.filter(p => p.codigoArt !== codigo);
+            productosNuevosEnEsteConteo.delete(codigo);
+            await eliminarProducto(currentUser.uid, codigo);
+            document.getElementById('catalogCount').textContent = baseDeDatos.length;
+            document.getElementById('dbStatus').innerText = `Productos cargados · ${baseDeDatos.length} productos`;
+            renderTablaProductos();
+        } else if (producto) {
+            if (stockOriginalPorCodigo.has(codigo)) {
+                producto.stock_unidad = stockOriginalPorCodigo.get(codigo);
+                stockOriginalPorCodigo.delete(codigo);
+                await actualizarStockProducto(currentUser.uid, producto);
+                renderTablaProductos();
+            } else {
+                // Producto que ya venía modificado de una sesión anterior (se
+                // recargó la página): no tenemos el valor previo real, así
+                // que solo lo sacamos de la lista sin tocar el stock actual.
+                showToast('No se pudo recuperar el valor anterior (era de otra sesión); solo se sacó de la lista.', 'info');
+            }
+        }
+
+        if (inventarioActual) {
+            await eliminarItemInventario(inventarioActual.id, codigo);
+        }
+        guardarCacheCatalogo(currentUser.uid);
+        marcarPendienteDeSincronizar();
+        showToast(esNuevo ? `"${nombre}" eliminado.` : `"${nombre}" revertido.`, 'success');
+    } catch (err) {
+        console.error(err);
+        showToast('Hubo un problema al sincronizar la reversión con Firebase.', 'error');
+    }
+}
 
 document.getElementById('nuevoInventarioBtn').addEventListener('click', async function () {
     if (!currentUser || !inventarioActual) return;
@@ -616,9 +700,11 @@ document.getElementById('nuevoInventarioBtn').addEventListener('click', async fu
         renderInventarioBar();
         hasChanges = false;
         productosModificados.clear();
+        stockOriginalPorCodigo.clear();
+        productosNuevosEnEsteConteo.clear();
         actualizarBadgeConteo();
         marcarPendienteDeSincronizar();
-        document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
+        document.getElementById('scannedTable').innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
         showToast(`Conteo finalizado. Nuevo inventario iniciado: ${inventarioActual.nombre}`, 'success');
     } catch (err) {
         console.error(err);
@@ -686,6 +772,13 @@ document.getElementById('scannerInput').addEventListener('keypress', function (e
         }
         this.value = '';
     }
+});
+
+// Solo permite números (los códigos de barra son numéricos). Filtra tanto
+// lo tipeado como lo pegado, sin importar el origen (teclado, lector físico, etc.).
+document.getElementById('scannerInput').addEventListener('input', function () {
+    const limpio = this.value.replace(/\D/g, '');
+    if (limpio !== this.value) this.value = limpio;
 });
 
 // -------------------------------
@@ -770,7 +863,7 @@ function renderTablaProductos() {
     const termino = normalizarTexto(productsSearchInput.value.trim());
 
     if (baseDeDatos.length === 0) {
-        productsTableBody.innerHTML = '<tr><td colspan="2" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
+        productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
         return;
     }
 
@@ -782,7 +875,7 @@ function renderTablaProductos() {
         );
 
     if (lista.length === 0) {
-        productsTableBody.innerHTML = '<tr><td colspan="2" class="empty-row">No se encontró ningún producto con ese criterio</td></tr>';
+        productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">No se encontró ningún producto con ese criterio</td></tr>';
         return;
     }
 
@@ -795,6 +888,7 @@ function renderTablaProductos() {
         tr.innerHTML = `
             <td>${producto.articulo}<span class="product-code">${producto.codigoArt}</span></td>
             <td class="stock-cell">${producto.stock_unidad}</td>
+            <td class="action-cell"><button type="button" class="row-delete-btn" data-accion="eliminar-producto" title="Eliminar para siempre">✕</button></td>
         `;
         productsTableBody.appendChild(tr);
     });
@@ -802,12 +896,52 @@ function renderTablaProductos() {
 
 productsSearchInput.addEventListener('input', renderTablaProductos);
 
-productsTableBody.addEventListener('click', function (e) {
+productsTableBody.addEventListener('click', async function (e) {
     const fila = e.target.closest('tr[data-codigo]');
     if (!fila) return;
-    const producto = baseDeDatos.find(p => p.codigoArt === fila.dataset.codigo);
+    const codigo = fila.dataset.codigo;
+
+    if (e.target.closest('[data-accion="eliminar-producto"]')) {
+        await eliminarProductoDelCatalogo(codigo);
+        return;
+    }
+
+    const producto = baseDeDatos.find(p => p.codigoArt === codigo);
     if (producto) abrirModalCantidad(producto, 'editar');
 });
+
+// Borra un producto del catálogo para siempre, desde la pestaña "Productos".
+// A diferencia del "eliminar" de Modificaciones, esto no revierte nada: el
+// producto deja de existir en el catálogo (Firestore + local).
+async function eliminarProductoDelCatalogo(codigo) {
+    if (!currentUser) return;
+    const producto = baseDeDatos.find(p => p.codigoArt === codigo);
+    const nombre = producto ? producto.articulo : codigo;
+
+    const confirmado = await mostrarConfirm({
+        titulo: 'Eliminar producto',
+        mensaje: `Se va a borrar "${nombre}" del catálogo para siempre. Esta acción no se puede deshacer. ¿Confirmás?`,
+        textoConfirmar: 'Eliminar'
+    });
+    if (!confirmado) return;
+
+    try {
+        await eliminarProducto(currentUser.uid, codigo);
+        baseDeDatos = baseDeDatos.filter(p => p.codigoArt !== codigo);
+        productosModificados.delete(codigo);
+        stockOriginalPorCodigo.delete(codigo);
+        productosNuevosEnEsteConteo.delete(codigo);
+        guardarCacheCatalogo(currentUser.uid);
+        document.getElementById('catalogCount').textContent = baseDeDatos.length;
+        document.getElementById('dbStatus').innerText = `Productos cargados · ${baseDeDatos.length} productos`;
+        renderTablaProductos();
+        actualizarBadgeConteo();
+        showToast(`"${nombre}" eliminado del catálogo.`, 'success');
+    } catch (err) {
+        console.error(err);
+        showToast('No se pudo eliminar el producto de Firebase.', 'error');
+    }
+}
 
 // -------------------------------
 // 5. Escaneo por cámara (html5-qrcode)
@@ -987,6 +1121,13 @@ document.getElementById('qtyConfirm').addEventListener('click', async () => {
 
     const producto = pendingProduct;
     const modo = modoModalCantidad;
+
+    // Guardamos el stock original SOLO la primera vez que se modifica este
+    // producto en el conteo actual (si ya estaba guardado, no lo pisamos).
+    if (!stockOriginalPorCodigo.has(producto.codigoArt) && !productosNuevosEnEsteConteo.has(producto.codigoArt)) {
+        stockOriginalPorCodigo.set(producto.codigoArt, producto.stock_unidad);
+    }
+
     producto.stock_unidad = modo === 'editar' ? valorIngresado : producto.stock_unidad + valorIngresado;
 
     actualizarTablaUI(producto);
@@ -1175,6 +1316,7 @@ document.getElementById('npConfirm').addEventListener('click', async () => {
     actualizarTablaUI(nuevoProducto);
     hasChanges = true;
     productosModificados.set(nuevoProducto.codigoArt, nuevoProducto);
+    productosNuevosEnEsteConteo.add(nuevoProducto.codigoArt);
     actualizarBadgeConteo();
     marcarPendienteDeSincronizar();
     guardarCacheCatalogo(currentUser.uid);
@@ -1186,6 +1328,7 @@ document.getElementById('npConfirm').addEventListener('click', async () => {
     try {
         await crearProducto(currentUser.uid, nuevoProducto);
         document.getElementById('catalogCount').textContent = baseDeDatos.length;
+        document.getElementById('dbStatus').innerText = `Productos cargados · ${baseDeDatos.length} productos`;
         await sincronizarItemInventario(nuevoProducto);
     } catch (err) {
         console.error(err);
@@ -1219,12 +1362,13 @@ function actualizarTablaUI(producto) {
 
     const tr = document.createElement('tr');
     tr.dataset.codigo = producto.codigoArt;
-    const horaActual = new Date().toLocaleTimeString('en-US');
+    const horaActual = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
     tr.innerHTML = `
         <td class="time-cell">${horaActual}</td>
         <td>${producto.articulo}<span class="product-code">${producto.codigoArt}</span></td>
         <td class="stock-cell">${producto.stock_unidad}</td>
+        <td class="action-cell"><button type="button" class="row-delete-btn" data-accion="eliminar" title="Revertir / eliminar">✕</button></td>
     `;
 
     tbody.prepend(tr);
@@ -1303,7 +1447,7 @@ function renderHistorial(resultados) {
             <div class="historial-item-header">
                 <div>
                     <div class="historial-item-nombre">${inv.nombre}</div>
-                    <div class="historial-item-meta">${fechaCierre ? fechaCierre.toLocaleString('es-AR') : '—'} · ${items.length} producto(s)</div>
+                    <div class="historial-item-meta">${fechaCierre ? fechaCierre.toLocaleString('es-AR', { hour12: false }) : '—'} · ${items.length} producto(s)</div>
                 </div>
                 <div class="historial-item-acciones">
                     <button type="button" class="btn btn--ghost btn--sm hist-descargar">Descargar</button>
@@ -1373,10 +1517,12 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
         baseDeDatos = [];
         hasChanges = false;
         productosModificados.clear();
+        stockOriginalPorCodigo.clear();
+        productosNuevosEnEsteConteo.clear();
         actualizarBadgeConteo();
         marcarPendienteDeSincronizar();
         resetHistorial();
-        document.getElementById('scannedTable').innerHTML = '<tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>';
+        document.getElementById('scannedTable').innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
         productsSearchInput.value = '';
         renderTablaProductos();
 
@@ -1394,3 +1540,27 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
         btn.textContent = 'Borrar catálogo e inventarios';
     }
 });
+
+// -------------------------------
+// PWA: registro del Service Worker
+// -------------------------------
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+            .then((registration) => {
+                // Si hay una versión nueva del SW esperando, avisamos para
+                // que el usuario recargue y quede al día (evita que quede
+                // atascado con una versión vieja del app shell cacheado).
+                registration.addEventListener('updatefound', () => {
+                    const nuevoWorker = registration.installing;
+                    if (!nuevoWorker) return;
+                    nuevoWorker.addEventListener('statechange', () => {
+                        if (nuevoWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                            showToast('Hay una actualización disponible. Cerrá y volvé a abrir la app para aplicarla.', 'info');
+                        }
+                    });
+                });
+            })
+            .catch((err) => console.error('No se pudo registrar el Service Worker:', err));
+    });
+}
