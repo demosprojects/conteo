@@ -14,12 +14,14 @@ import {
     getDocs,
     setDoc,
     updateDoc,
+    deleteDoc,
     addDoc,
     query,
     where,
     orderBy,
     limit,
     serverTimestamp,
+    deleteField,
     writeBatch
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
@@ -130,6 +132,14 @@ export async function crearProducto(uid, producto) {
     }, { merge: true });
 }
 
+// Borra un único producto del catálogo. Se usa cuando un producto se dio de
+// alta por error durante un conteo (código escaneado mal, alta manual
+// equivocada, etc.) y se elimina desde "Modificaciones" antes de sincronizar.
+export async function eliminarProducto(uid, codigoArt) {
+    const ref = doc(db, "productos", `${uid}_${sanitizarCodigo(codigoArt)}`);
+    await deleteDoc(ref);
+}
+
 export async function actualizarStockProducto(uid, producto) {
     try {
         const ref = doc(db, "productos", `${uid}_${sanitizarCodigo(producto.codigoArt)}`);
@@ -202,7 +212,7 @@ export async function obtenerInventarioAbierto(uid) {
 
 export async function crearInventario(uid) {
     const ahora = new Date();
-    const nombre = `Conteo ${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
+    const nombre = `Conteo ${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
     const ref = await addDoc(collection(db, "inventarios"), {
         usuario: uid,
         estado: "abierto",
@@ -241,7 +251,19 @@ export async function obtenerInventariosCerrados(uid, desde = null, hasta = null
     return resultados;
 }
 
-// Actualiza (o crea) un item puntual dentro del mapa "items" del inventario actual.
+// Quita un item puntual del mapa "items" del inventario actual. Se usa al
+// revertir una modificación desde "Modificaciones" (el producto vuelve a su
+// stock original y deja de contar como modificado en este conteo).
+export async function eliminarItemInventario(inventarioId, codigo) {
+    try {
+        const ref = doc(db, "inventarios", inventarioId);
+        await updateDoc(ref, { [`items.${sanitizarCodigo(codigo)}`]: deleteField() });
+        return true;
+    } catch (e) {
+        console.error("❌ Error quitando item del inventario:", e);
+        return false;
+    }
+}
 export async function actualizarItemInventario(inventarioId, codigo, item) {
     try {
         const ref = doc(db, "inventarios", inventarioId);
