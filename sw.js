@@ -10,7 +10,7 @@
 // IMPORTANTE: subí CACHE_VERSION cada vez que hagas un deploy con cambios en
 // los archivos cacheados (app.js, style.css, index.html, firebase.js), si no
 // los usuarios pueden quedar viendo una versión vieja hasta que expire el caché.
-const CACHE_VERSION = 'conteo-plus-v1';
+const CACHE_VERSION = 'conteo-plus-v2';
 
 const APP_SHELL = [
     './',
