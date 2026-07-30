@@ -30,6 +30,26 @@ let unsubInventario = null;  // función para dejar de escuchar el inventario ac
 // Solo los productos que se modificaron en el conteo actual (para exportar el .txt)
 const productosModificados = new Map();
 
+// -------------------------------
+// Tiempo mínimo de loaders: sin esto, en conexiones rápidas (o cuando
+// Firestore resuelve de la caché local por la persistencia offline) el
+// boot loader y el estado "Cargando catálogo…" aparecen y desaparecen tan
+// rápido que casi no se alcanzan a ver. conTiempoMinimo() retrasa la
+// callback lo que haga falta para que el loader quede visible al menos
+// TIEMPO_MINIMO_LOADER ms desde que arrancó, sin importar cuánto haya
+// tardado la carga real.
+// -------------------------------
+const TIEMPO_MINIMO_LOADER = 900;
+
+function conTiempoMinimo(desde, callback) {
+    const restante = TIEMPO_MINIMO_LOADER - (Date.now() - desde);
+    if (restante > 0) {
+        setTimeout(callback, restante);
+    } else {
+        callback();
+    }
+}
+
 // Stock que tenía cada producto ANTES de su primera modificación en este
 // conteo (codigoArt -> stock original). Permite revertir un escaneo/edición
 // por error desde "Modificaciones" sin perder el valor previo real.
@@ -140,6 +160,26 @@ const appRoot = document.getElementById('appRoot');
 const loginForm = document.getElementById('loginForm');
 const loginError = document.getElementById('loginError');
 const loginSubmitBtn = document.getElementById('loginSubmitBtn');
+const bootLoader = document.getElementById('bootLoader');
+const bootLoaderLabel = document.getElementById('bootLoaderLabel');
+
+// Momento en que arrancó el boot loader — se reinicia cada vez que se
+// vuelve a mostrar (al cargar la página, y también al tocar "Ingresar"),
+// para que quede visible el tiempo mínimo aunque Firebase resuelva casi al
+// instante.
+let inicioBootLoader = Date.now();
+
+function mostrarBootLoader(etiqueta) {
+    inicioBootLoader = Date.now();
+    if (etiqueta) bootLoaderLabel.textContent = etiqueta;
+    bootLoader.classList.remove('is-hidden');
+}
+
+function ocultarBootLoader() {
+    conTiempoMinimo(inicioBootLoader, () => {
+        bootLoader.classList.add('is-hidden');
+    });
+}
 
 loginForm.addEventListener('submit', async function (e) {
     e.preventDefault();
@@ -148,15 +188,23 @@ loginForm.addEventListener('submit', async function (e) {
 
     loginError.classList.remove('show');
     loginSubmitBtn.disabled = true;
-    loginSubmitBtn.textContent = 'Ingresando…';
+    loginSubmitBtn.innerHTML = '<span class="spinner"></span>Ingresando…';
+
+    // Tapamos toda la pantalla con el boot loader mientras se valida el
+    // login y arranca la carga de la sesión (catálogo, inventario). Si el
+    // login sale bien, onAuthChange lo va a ocultar solo una vez que la
+    // app esté lista para mostrarse; si falla, lo ocultamos nosotros mismos
+    // más abajo, porque en ese caso onAuthChange no se dispara.
+    mostrarBootLoader('Ingresando…');
 
     try {
         await loginUsuario(email, password);
-        // onAuthChange se encarga de mostrar la app
+        // onAuthChange se encarga de mostrar la app y ocultar el boot loader
     } catch (err) {
         console.error(err);
         loginError.textContent = 'No pudimos iniciar sesión. Revisá el email y la contraseña.';
         loginError.classList.add('show');
+        ocultarBootLoader();
     } finally {
         loginSubmitBtn.disabled = false;
         loginSubmitBtn.textContent = 'Ingresar';
@@ -223,6 +271,13 @@ function actualizarBadgeConteo() {
 onAuthChange(async function (user) {
     currentUser = user;
 
+    // Ya sabemos si hay sesión o no: se acabó la incertidumbre que
+    // justificaba el boot loader, así que lo ocultamos (sea cual sea el
+    // resultado) y dejamos que se vea login o app según corresponda. Con
+    // tiempo mínimo para que no sea un parpadeo si Firebase respondió
+    // casi al instante.
+    ocultarBootLoader();
+
     if (user) {
         loginScreen.classList.add('is-hidden');
         appRoot.classList.remove('is-hidden');
@@ -242,6 +297,13 @@ onAuthChange(async function (user) {
 async function inicializarSesion(uid) {
     let primeraFotoCatalogo = true;
 
+    // Todavía no sabemos si esta cuenta tiene catálogo cargado o no (la
+    // primera respuesta de Firestore puede tardar un instante): mostramos
+    // un estado de "cargando" en vez de saltar directo a "sin productos",
+    // que confundiría a una cuenta que en realidad sí tiene todo cargado.
+    mostrarCargandoCatalogo();
+    const inicioCargaCatalogo = Date.now();
+
     // Catálogo: un único listener en tiempo real por sesión. Cada vez que
     // CUALQUIER dispositivo logueado con esta cuenta da de alta, edita o
     // borra un producto, este callback se dispara solo en TODOS los
@@ -258,21 +320,36 @@ async function inicializarSesion(uid) {
             stock_unidad: p.stock || 0
         }));
 
-        if (baseDeDatos.length > 0) {
-            mostrarCatalogoListo();
+        // Solo la PRIMERA foto del catálogo pasa por el estado "Cargando…":
+        // a esa la retrasamos con el tiempo mínimo para que el loader se
+        // note. Las actualizaciones en tiempo real que lleguen después
+        // (alguien escaneó algo desde otro dispositivo, etc.) se aplican
+        // al instante, sin ningún retraso artificial.
+        const esPrimeraFoto = primeraFotoCatalogo;
+        primeraFotoCatalogo = false;
+
+        const aplicarFotoCatalogo = () => {
+            if (baseDeDatos.length > 0) {
+                mostrarCatalogoListo();
+            } else {
+                mostrarCargaInicial();
+            }
+
+            // Reordenamos la tabla de "Modificaciones" con el stock más
+            // fresco por si cambió algo mientras el conteo estaba abierto.
+            if (inventarioActual) {
+                sincronizarItemsDesdeInventario(inventarioActual.items || {});
+            }
+
+            if (esPrimeraFoto) {
+                activarPagina(baseDeDatos.length === 0 ? 'productos' : 'escanear');
+            }
+        };
+
+        if (esPrimeraFoto) {
+            conTiempoMinimo(inicioCargaCatalogo, aplicarFotoCatalogo);
         } else {
-            mostrarCargaInicial();
-        }
-
-        // Reordenamos la tabla de "Modificaciones" con el stock más fresco
-        // por si cambió algo mientras el conteo estaba abierto.
-        if (inventarioActual) {
-            sincronizarItemsDesdeInventario(inventarioActual.items || {});
-        }
-
-        if (primeraFotoCatalogo) {
-            primeraFotoCatalogo = false;
-            activarPagina(baseDeDatos.length === 0 ? 'productos' : 'escanear');
+            aplicarFotoCatalogo();
         }
     }, () => {
         showToast('No se pudo sincronizar el catálogo. Revisá tu conexión.', 'error');
@@ -316,7 +393,7 @@ function resetEstadoApp() {
     deshabilitarEscaneo();
     const dbStatus = document.getElementById('dbStatus');
     dbStatus.innerText = 'Sin productos · 0 productos';
-    dbStatus.classList.remove('is-ready');
+    dbStatus.classList.remove('is-ready', 'is-loading');
     if (isScanning) detenerCamara();
     activarPagina('escanear');
 }
@@ -326,6 +403,7 @@ function resetEstadoApp() {
 // -------------------------------
 function mostrarCatalogoListo() {
     const dbStatus = document.getElementById('dbStatus');
+    dbStatus.classList.remove('is-loading');
     dbStatus.innerText = `Productos cargados · ${baseDeDatos.length} productos`;
     dbStatus.classList.add('is-ready');
 
@@ -340,6 +418,7 @@ function mostrarCatalogoListo() {
 
 function mostrarCargaInicial() {
     const dbStatus = document.getElementById('dbStatus');
+    dbStatus.classList.remove('is-loading');
     dbStatus.innerText = 'Sin productos · subí el catálogo inicial';
     dbStatus.classList.remove('is-ready');
 
@@ -348,6 +427,36 @@ function mostrarCargaInicial() {
 
     deshabilitarEscaneo();
     actualizarEstadoDescarga();
+}
+
+// Estado transitorio, entre el login y la primera respuesta real de
+// Firestore. No sabemos todavía si la cuenta tiene catálogo o no, así que
+// ni mostramos "sin productos" ni la tabla vacía: un spinner en el badge y
+// filas skeleton en la tabla de productos.
+function mostrarCargandoCatalogo() {
+    const dbStatus = document.getElementById('dbStatus');
+    dbStatus.classList.remove('is-ready');
+    dbStatus.classList.add('is-loading');
+    dbStatus.innerHTML = '<span class="spinner spinner--amber"></span>Cargando catálogo…';
+
+    document.getElementById('catalogUploadPanel').style.display = 'none';
+    document.getElementById('catalogStatus').style.display = 'none';
+
+    deshabilitarEscaneo();
+    renderSkeletonProductos();
+}
+
+function renderSkeletonProductos() {
+    let filas = '';
+    for (let i = 0; i < 5; i++) {
+        filas += `
+            <tr class="skeleton-row">
+                <td><div class="skeleton-bar skeleton-bar--wide"></div></td>
+                <td><div class="skeleton-bar skeleton-bar--narrow"></div></td>
+                <td></td>
+            </tr>`;
+    }
+    productsTableBody.innerHTML = filas;
 }
 
 function habilitarEscaneo() {
@@ -1344,6 +1453,11 @@ async function buscarHistorial() {
     vacio.style.display = '';
     vacio.textContent = 'Buscando…';
 
+    const btn = document.getElementById('histBuscarBtn');
+    const textoOriginal = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner spinner--dark"></span>Buscando…';
+
     try {
         const resultados = await obtenerInventariosCerrados(currentUser.uid, desde, hasta);
         renderHistorial(resultados);
@@ -1351,6 +1465,9 @@ async function buscarHistorial() {
         console.error(err);
         vacio.textContent = 'No se pudo traer el historial.';
         vacio.style.display = '';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = textoOriginal;
     }
 }
 
@@ -1369,7 +1486,7 @@ function renderHistorial(resultados) {
     }
     vacio.style.display = 'none';
 
-    resultados.forEach(inv => {
+    resultados.forEach((inv, index) => {
         const items = Object.values(inv.items || {});
         const fechaCierre = (inv.fechaCierre && typeof inv.fechaCierre.toDate === 'function')
             ? inv.fechaCierre.toDate()
@@ -1377,6 +1494,11 @@ function renderHistorial(resultados) {
 
         const wrapper = document.createElement('div');
         wrapper.className = 'historial-item';
+        // Entrada escalonada: cada tarjeta aparece un poco después que la
+        // anterior en vez de todas de golpe. Se limita el delay a los
+        // primeros 10 items para que una lista larga no tarde una
+        // eternidad en terminar de aparecer.
+        wrapper.style.animationDelay = `${Math.min(index, 10) * 45}ms`;
 
         const filasProductos = items.map(it => `
             <tr>
@@ -1449,7 +1571,7 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
 
     const btn = this;
     btn.disabled = true;
-    btn.textContent = 'Borrando…';
+    btn.innerHTML = '<span class="spinner"></span>Borrando…';
 
     try {
         const productosBorrados = await borrarCatalogoCompleto(currentUser.uid);
