@@ -518,34 +518,77 @@ body {
 .login-overlay {
     position: fixed;
     inset: 0;
-    background: var(--ink);
+    z-index: 500;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 20px;
-    z-index: 500;
+    background: var(--ink);
+    background-image:
+        repeating-linear-gradient(135deg, rgba(245, 165, 36, .05) 0 2px, transparent 2px 18px),
+        radial-gradient(circle at 50% 15%, rgba(245, 165, 36, .16), transparent 55%);
+    overflow-y: auto;
 }
 
 .login-overlay.is-hidden { display: none; }
 
 .login-card {
+    position: relative;
     background: #fff;
-    border-radius: 16px;
-    padding: 32px;
+    border-radius: 20px;
+    padding: 36px 32px 28px;
     max-width: 380px;
     width: 100%;
     box-shadow: 0 24px 60px rgba(0, 0, 0, .4);
+    animation: loginCardIn .5s cubic-bezier(.2, .7, .3, 1);
 }
+
+@keyframes loginCardIn {
+    from { opacity: 0; transform: translateY(14px) scale(.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .login-card { animation: none; }
+}
+
+/* Corners tipo visor de cámara: el mismo lenguaje visual que el marco de
+   escaneo de la pantalla principal, para que el login se sienta parte de
+   la misma app desde el primer segundo en vez de una pantalla genérica. */
+.login-corner {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    border: 3px solid var(--amber);
+    opacity: .85;
+    pointer-events: none;
+}
+.login-corner--tl { top: -3px; left: -3px; border-right: 0; border-bottom: 0; border-radius: 8px 0 0 0; }
+.login-corner--tr { top: -3px; right: -3px; border-left: 0; border-bottom: 0; border-radius: 0 8px 0 0; }
+.login-corner--bl { bottom: -3px; left: -3px; border-right: 0; border-top: 0; border-radius: 0 0 0 8px; }
+.login-corner--br { bottom: -3px; right: -3px; border-left: 0; border-top: 0; border-radius: 0 0 8px 0; }
+
+.login-badge {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: var(--ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 18px;
+}
+.login-badge svg { width: 26px; height: 26px; stroke: var(--amber); }
 
 .login-card h1 {
     font-family: 'Space Grotesk', sans-serif;
-    font-size: 24px;
+    font-size: clamp(21px, 5vw, 24px);
     font-weight: 700;
     margin: 4px 0 6px;
     color: var(--ink);
 }
 
-.login-card .hint { margin-bottom: 22px; }
+.login-card .hint { margin-bottom: 24px; }
 
 .login-error {
     display: none;
@@ -555,6 +598,85 @@ body {
 }
 
 .login-error.show { display: block; }
+
+/* Inputs con ícono a la izquierda (y, en contraseña, botón de mostrar a
+   la derecha) */
+.input-with-icon { position: relative; }
+
+.input-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    color: var(--ink-soft);
+    pointer-events: none;
+}
+
+.manual-input.has-icon { padding-left: 42px; }
+.manual-input.has-toggle { padding-right: 46px; }
+
+.input-toggle {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    -webkit-tap-highlight-color: transparent;
+}
+.input-toggle:hover { background: var(--paper); color: var(--ink); }
+.input-toggle svg { width: 19px; height: 19px; }
+.input-toggle .icon-eye-off { display: none; }
+.input-toggle.is-visible .icon-eye { display: none; }
+.input-toggle.is-visible .icon-eye-off { display: block; }
+
+/* Contacto de soporte por WhatsApp */
+.login-support {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    text-align: center;
+}
+
+.login-support-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    text-decoration: none;
+    padding: 9px 12px;
+    border-radius: 8px;
+    transition: background .15s, color .15s;
+    -webkit-tap-highlight-color: transparent;
+}
+.login-support-link:hover,
+.login-support-link:focus-visible { background: var(--success-soft); color: #1c6b2c; }
+.login-support-link svg { width: 18px; height: 18px; flex-shrink: 0; color: #25d366; }
+
+@media (max-width: 380px) {
+    .login-card { padding: 30px 22px 22px; border-radius: 16px; }
+    .login-badge { width: 46px; height: 46px; margin-bottom: 14px; }
+    .login-support-link span { font-size: 12.5px; }
+}
+
+@media (max-height: 640px) {
+    .login-overlay { align-items: flex-start; padding-top: max(24px, env(safe-area-inset-top, 0px)); padding-bottom: max(24px, env(safe-area-inset-bottom, 0px)); }
+}
 
 .app.is-hidden { display: none; }
 
@@ -752,6 +874,20 @@ body {
     border: 1px solid var(--line);
     border-radius: 10px;
     overflow: hidden;
+    opacity: 0;
+    animation: historialItemIn .4s cubic-bezier(.2, .7, .3, 1) forwards;
+}
+
+/* forwards deja la tarjeta en su estado final (opacity:1, sin desplazar)
+   una vez terminada la animación, así que "quedan ahí" en vez de volver a
+   su estado inicial invisible. */
+@keyframes historialItemIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .historial-item { animation: none; opacity: 1; }
 }
 
 .historial-item-header {
@@ -958,4 +1094,190 @@ body {
         border-right: 1px solid var(--line);
     }
     .nav-btn { font-size: 12px; }
+}
+
+/* =========================================================
+   Loaders
+   ========================================================= */
+
+/* Spinner genérico, para usar dentro de botones y badges */
+.spinner {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    border: 2px solid rgba(255, 255, 255, .35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    vertical-align: -3px;
+    margin-right: 8px;
+    flex-shrink: 0;
+}
+
+.spinner--dark { border-color: rgba(18, 22, 28, .18); border-top-color: var(--ink); }
+.spinner--amber { border-color: rgba(245, 165, 36, .3); border-top-color: var(--amber); }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 1.4s; }
+}
+
+/* Boot loader: pantalla completa que tapa todo mientras se resuelve la
+   sesión — al cargar la página (Firebase confirmando si hay sesión activa)
+   y también justo después de tocar "Ingresar", mientras se valida el login
+   y arranca la carga de la sesión. Cubre incluso a la pantalla de login
+   (z-index más alto) y se controla desde app.js con mostrarBootLoader() /
+   ocultarBootLoader(). */
+.boot-loader {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    background: var(--ink);
+    background-image: radial-gradient(circle at 50% 35%, rgba(245, 165, 36, .16), transparent 60%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity .4s ease, visibility .4s ease, filter .4s ease;
+}
+
+.boot-loader.is-hidden {
+    opacity: 0;
+    visibility: hidden;
+    filter: blur(6px);
+    pointer-events: none;
+}
+
+.boot-loader__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+}
+
+/* Ícono con un anillo orbital girando alrededor (conic-gradient recortado
+   en forma de dona), más moderno que un borde de spinner simple. */
+.boot-loader__logo {
+    position: relative;
+    width: 68px;
+    height: 68px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.boot-loader__logo-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg, transparent 0deg, var(--amber-dark) 90deg, var(--amber) 200deg, transparent 320deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    animation: spin 1.1s linear infinite;
+}
+
+.boot-loader__logo-icon {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #1b2129;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 1px rgba(245, 165, 36, .12);
+    animation: bootPulse 2.2s ease-in-out infinite;
+}
+
+.boot-loader__logo-icon svg { width: 21px; height: 21px; stroke: var(--amber); }
+
+@keyframes bootPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
+}
+
+.boot-loader__mark {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -.01em;
+}
+
+.boot-loader__mark span { color: var(--amber); }
+
+/* Barra de progreso indeterminada: un tramo corto que recorre la barra en
+   loop, sensación más moderna que solo un anillo girando. */
+.boot-loader__bar {
+    width: 132px;
+    height: 3px;
+    border-radius: 999px;
+    background: rgba(245, 165, 36, .16);
+    overflow: hidden;
+}
+
+.boot-loader__bar-fill {
+    width: 40%;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, var(--amber), transparent);
+    animation: bootBarSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes bootBarSlide {
+    0% { transform: translateX(-120%); }
+    100% { transform: translateX(340%); }
+}
+
+.boot-loader__label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: #9aa3ac;
+    transition: opacity .15s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .boot-loader { transition: opacity .2s ease, visibility .2s ease; }
+    .boot-loader.is-hidden { filter: none; }
+    .boot-loader__logo-ring { animation: none; border-top: 3px solid var(--amber); }
+    .boot-loader__logo-icon { animation: none; }
+    .boot-loader__bar-fill { animation: none; width: 100%; background: var(--amber); }
+}
+
+/* Badge del header en estado "cargando catálogo" (distinto de "listo" y de
+   "sin productos, subí el .txt"): dura solo hasta la primera respuesta de
+   Firestore después de loguearse. */
+.status-badge.is-loading {
+    background: var(--ink);
+    display: inline-flex;
+    align-items: center;
+}
+
+/* Filas "fantasma" con shimmer para la tabla de productos mientras se
+   espera la primera respuesta de Firestore, en vez de mostrar el estado
+   vacío ("subí el catálogo") como si la cuenta no tuviera nada cargado. */
+.skeleton-row td { padding: 14px; }
+.skeleton-row:hover { background: none !important; }
+
+.skeleton-bar {
+    height: 13px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--line) 25%, #f4f6f0 37%, var(--line) 63%);
+    background-size: 400% 100%;
+    animation: shimmer 1.4s ease infinite;
+}
+
+.skeleton-bar--wide { width: 70%; }
+.skeleton-bar--narrow { width: 36px; margin: 0 auto; }
+
+@keyframes shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .skeleton-bar { animation: none; background: var(--line); }
 }
