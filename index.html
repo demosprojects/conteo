@@ -22,26 +22,90 @@
 </head>
 <body>
 
+<!-- Boot loader: pantalla completa que tapa todo mientras se resuelve la
+     sesión — tanto al cargar la página (Firebase confirmando si hay sesión
+     activa) como justo después de tocar "Ingresar" (login + primera carga
+     de la sesión). Se muestra/oculta desde app.js. -->
+<div class="boot-loader" id="bootLoader">
+    <div class="boot-loader__inner">
+        <div class="boot-loader__logo">
+            <div class="boot-loader__logo-ring"></div>
+            <div class="boot-loader__logo-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
+            </div>
+        </div>
+        <div class="boot-loader__mark">Conteo<span>+</span></div>
+        <div class="boot-loader__bar"><div class="boot-loader__bar-fill"></div></div>
+        <div class="boot-loader__label" id="bootLoaderLabel">Iniciando…</div>
+    </div>
+</div>
+
 <!-- Pantalla de login -->
 <div class="login-overlay" id="loginScreen">
     <div class="login-card">
+        <span class="login-corner login-corner--tl" aria-hidden="true"></span>
+        <span class="login-corner login-corner--tr" aria-hidden="true"></span>
+        <span class="login-corner login-corner--bl" aria-hidden="true"></span>
+        <span class="login-corner login-corner--br" aria-hidden="true"></span>
+
+        <div class="login-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
+        </div>
+
         <span class="eyebrow">Conteo+ | Control de inventario</span>
         <h1>Ingresá a tu cuenta</h1>
-        <p class="hint">Accede con las credenciales que te proporcionaron.</p>
+        <p class="hint">Accedé con las credenciales que te proporcionaron.</p>
+
         <form id="loginForm">
             <div class="field-group">
                 <label class="field-label" for="loginEmail">Email</label>
-                <input type="email" id="loginEmail" class="manual-input" required autocomplete="username">
+                <div class="input-with-icon">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></svg>
+                    <input type="email" id="loginEmail" class="manual-input has-icon" required autocomplete="username" autocapitalize="none" autofocus placeholder="tu@email.com">
+                </div>
             </div>
             <div class="field-group">
                 <label class="field-label" for="loginPassword">Contraseña</label>
-                <input type="password" id="loginPassword" class="manual-input" required autocomplete="current-password">
+                <div class="input-with-icon">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    <input type="password" id="loginPassword" class="manual-input has-icon has-toggle" required autocomplete="current-password" placeholder="••••••••">
+                    <button type="button" class="input-toggle" id="togglePassword" aria-label="Mostrar contraseña" aria-pressed="false">
+                        <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                        <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a13.3 13.3 0 0 1-2.6 3.53M6.6 6.6A13.4 13.4 0 0 0 1 11.5S5 18.5 12 18.5a9.3 9.3 0 0 0 5.4-1.61M9.9 9.9a3 3 0 1 0 4.24 4.24"/><path d="M1 1l22 22"/></svg>
+                    </button>
+                </div>
             </div>
             <p class="login-error" id="loginError">No pudimos iniciar sesión.</p>
             <button type="submit" class="btn btn--primary btn--full" id="loginSubmitBtn">Ingresar</button>
         </form>
+
+        <div class="login-support">
+            <a class="login-support-link" href="https://wa.me/5493644539325?text=Hola%2C%20necesito%20ayuda%20para%20ingresar%20a%20Conteo%2B" target="_blank" rel="noopener noreferrer">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                <span>¿No podés ingresar? Escribinos por WhatsApp</span>
+            </a>
+        </div>
     </div>
 </div>
+
+<script>
+// Mostrar/ocultar contraseña en el login. Vive acá (no en app.js) porque es
+// puramente de presentación, sin ninguna dependencia de Firebase ni del
+// estado de la app.
+(function () {
+    var toggleBtn = document.getElementById('togglePassword');
+    var passwordInput = document.getElementById('loginPassword');
+    if (!toggleBtn || !passwordInput) return;
+
+    toggleBtn.addEventListener('click', function () {
+        var mostrar = passwordInput.type === 'password';
+        passwordInput.type = mostrar ? 'text' : 'password';
+        toggleBtn.classList.toggle('is-visible', mostrar);
+        toggleBtn.setAttribute('aria-pressed', String(mostrar));
+        toggleBtn.setAttribute('aria-label', mostrar ? 'Ocultar contraseña' : 'Mostrar contraseña');
+    });
+})();
+</script>
 
 <!-- App -->
 <div class="app is-hidden" id="appRoot">
