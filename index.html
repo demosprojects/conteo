@@ -2,9 +2,17 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Conteo+</title>
 <link rel="icon" href="logoapp.png" type="image/png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#f5a524">
+<meta name="background-color" content="#eef0ec">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Conteo+">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -89,7 +97,7 @@
                 <!-- Panel manual (código) -->
                 <div class="tab-panel" id="panelManual" style="display:none;">
                     <input type="text" id="scannerInput" placeholder="Ingresá o pegá el código y presioná Enter…"
-                        class="manual-input" disabled>
+                        class="manual-input" inputmode="numeric" pattern="[0-9]*" disabled>
                 </div>
 
                 <!-- Panel búsqueda por nombre (para productos sin código de barra) -->
@@ -125,10 +133,11 @@
                             <tr>
                                 <th>Artículo</th>
                                 <th class="text-center">Stock</th>
+                                <th class="text-center"></th>
                             </tr>
                         </thead>
                         <tbody id="productsTableBody">
-                            <tr><td colspan="2" class="empty-row">Subí el catálogo para ver los productos</td></tr>
+                            <tr><td colspan="3" class="empty-row">Subí el catálogo para ver los productos</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -153,7 +162,7 @@
             <div class="card log-card">
                 <span class="card__step">Registro</span>
                 <h2>Modificaciones</h2>
-                <p class="hint">¿Te equivocaste al escanear? Tocá el nombre del producto para corregir el stock.</p>
+                <p class="hint">¿Te equivocaste al escanear? Tocá el nombre del producto para corregir el stock, o tocá la ✕ para revertirlo.</p>
                 <div class="log-table-wrap">
                     <table class="log-table">
                         <thead>
@@ -161,10 +170,11 @@
                                 <th>Hora</th>
                                 <th>Artículo</th>
                                 <th class="text-center">Nuevo stock</th>
+                                <th class="text-center"></th>
                             </tr>
                         </thead>
                         <tbody id="scannedTable">
-                            <tr><td colspan="3" class="empty-row">No hay modificaciones recientes</td></tr>
+                            <tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>
                         </tbody>
                     </table>
                 </div>
