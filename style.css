@@ -51,9 +51,9 @@ body.modal-open {
 .topbar {
     display: flex;
     justify-content: space-between;
-    align-items: flex-end;
+    align-items: center;
     flex-wrap: wrap;
-    gap: 14px;
+    gap: 14px 16px;
     padding-bottom: 20px;
     margin-bottom: 28px;
     border-bottom: 2px solid var(--ink);
@@ -78,18 +78,46 @@ body.modal-open {
 }
 
 .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 600;
-    background: var(--ink);
-    color: var(--paper);
-    padding: 9px 16px;
-    border-radius: 999px;
+    letter-spacing: .02em;
+    color: var(--amber-dark);
     white-space: nowrap;
-    transition: background .2s;
+    transition: color .2s;
 }
 
-.status-badge.is-ready { background: var(--success); }
+/* Punto de estado: usa currentColor, así hereda el color de cada estado
+   sin necesitar una regla por variante. */
+.status-badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+.status-badge.is-ready { color: var(--success); }
+
+/* Estado transitorio ("Cargando catálogo…"): pasa a tinta oscura para
+   distinguirse de los estados informativos, y el spinner que inyecta el
+   JS reemplaza al punto. */
+.status-badge.is-loading { color: var(--ink); }
+
+.status-badge.is-loading::before { display: none; }
+
+/* Separador entre el estado del catálogo y el grupo usuario+salir. Se
+   oculta en mobile porque ahí ese grupo ya cae en su propia fila. */
+.topbar-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--line);
+    flex-shrink: 0;
+}
 
 /* Layout: páginas con navegación inferior tipo app */
 .pages {
@@ -390,37 +418,85 @@ body.modal-open {
 /* Toasts */
 .toast-container {
     position: fixed;
-    bottom: 20px;
-    right: 20px;
-    left: 20px;
+    top: max(16px, env(safe-area-inset-top, 0px) + 12px);
+    left: 16px;
+    right: 16px;
     display: flex;
     flex-direction: column;
-    align-items: flex-end;
+    align-items: center;
     gap: 10px;
     z-index: 300;
     pointer-events: none;
 }
 
-.toast {
-    pointer-events: auto;
-    background: var(--ink);
-    color: #fff;
-    padding: 13px 18px;
-    border-radius: 10px;
-    font-size: 13.5px;
-    font-weight: 500;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, .22);
-    border-left: 4px solid var(--amber);
-    max-width: 340px;
-    animation: toastIn .22s ease;
+@media (min-width: 640px) {
+    .toast-container {
+        left: auto;
+        /* Arriba a la derecha, pero corrido hacia el centro en vez de
+           pegado a la esquina del todo. */
+        right: 14%;
+        align-items: flex-end;
+    }
 }
 
-.toast.success { border-left-color: var(--success); }
-.toast.error { border-left-color: var(--danger); }
+.toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--paper-raised);
+    color: var(--ink);
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    box-shadow: 0 16px 40px rgba(18, 22, 28, .16);
+    font-size: 13.5px;
+    font-weight: 500;
+    line-height: 1.4;
+    max-width: min(380px, calc(100vw - 32px));
+    width: max-content;
+    animation: toastIn .25s cubic-bezier(.22, .9, .3, 1.2);
+}
+
+.toast-icon {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--amber-soft);
+    color: var(--amber-dark);
+}
+.toast-icon svg { width: 16px; height: 16px; }
+
+.toast.success .toast-icon { background: var(--success-soft); color: var(--success); }
+.toast.error .toast-icon { background: var(--danger-soft); color: var(--danger); }
+
+.toast-message { flex: 1; min-width: 0; }
+
+.toast-close {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 0;
+}
+.toast-close:hover { background: var(--paper); color: var(--ink); }
+.toast-close svg { width: 14px; height: 14px; }
+
 .toast.fade-out { animation: toastOut .2s ease forwards; }
 
-@keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes toastOut { to { opacity: 0; transform: translateY(-6px); } }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-10px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes toastOut { to { opacity: 0; transform: translateY(-8px) scale(.97); } }
 
 /* Modal */
 .modal-overlay {
@@ -756,58 +832,108 @@ body.modal-open {
     flex-wrap: wrap;
 }
 
-.user-chip {
+/* Agrupa chip de usuario + botón de salir como un solo bloque, para que al
+   envolver en mobile el status-badge quede a la izquierda y este grupo a la
+   derecha, en vez de que los tres elementos se acomoden sueltos y sin orden. */
+.topbar-actions {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 6px 16px 6px 6px;
-    background: var(--paper-raised);
-    border: 1.5px solid var(--ink);
-    border-radius: 999px;
-    box-shadow: 3px 3px 0 var(--ink);
+}
+
+@media (max-width: 700px) {
+    .topbar-right { flex-basis: 100%; justify-content: space-between; }
+    .topbar-divider { display: none; }
+}
+
+.user-chip {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    max-width: 200px;
 }
 
 .user-chip__avatar {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
+    width: 28px;
+    height: 28px;
     flex-shrink: 0;
     border-radius: 50%;
     background: var(--amber);
     color: var(--ink);
     font-family: 'Space Grotesk', sans-serif;
     font-weight: 700;
-    font-size: 15px;
+    font-size: 12.5px;
 }
 
 .user-chip__text {
     display: flex;
     flex-direction: column;
     line-height: 1.25;
+    min-width: 0;
 }
 
 .user-chip__greeting {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Inter', sans-serif;
     font-size: 11px;
-    font-weight: 600;
-    letter-spacing: .04em;
+    font-weight: 500;
     color: var(--ink-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .user-chip__name {
     font-family: 'Space Grotesk', sans-serif;
-    font-size: 14.5px;
+    font-size: 14px;
     font-weight: 700;
     color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Botón de ícono: es el único elemento clickeable del cluster, así que es
+   el único que conserva borde y sombra — eso marca la diferencia entre lo
+   que es información (badge, chip) y lo que es acción. */
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    background: var(--paper-raised);
+    border: 1.5px solid var(--ink);
+    border-radius: 999px;
+    box-shadow: 2px 2px 0 var(--ink);
+    color: var(--ink);
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s, transform .1s, box-shadow .1s;
+}
+
+.icon-btn svg { width: 18px; height: 18px; }
+
+.icon-btn--logout:hover {
+    background: var(--danger-soft);
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.icon-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: 0 0 0 var(--ink);
 }
 
 @media (max-width: 480px) {
-    .user-chip { padding: 5px 14px 5px 5px; gap: 8px; }
-    .user-chip__avatar { width: 30px; height: 30px; font-size: 13.5px; }
+    .user-chip { gap: 7px; max-width: 150px; }
+    .user-chip__avatar { width: 25px; height: 25px; font-size: 11.5px; }
     .user-chip__greeting { font-size: 10px; }
     .user-chip__name { font-size: 13.5px; }
+    .icon-btn { width: 36px; height: 36px; }
+    .icon-btn svg { width: 16px; height: 16px; }
 }
 
 .btn--sm { padding: 8px 14px; font-size: 13px; }
@@ -846,6 +972,17 @@ body.modal-open {
     color: var(--ink-soft);
     margin-top: 6px;
     max-width: 420px;
+}
+
+/* Día cerrado: la barra pasa a un tono apagado y el estado deja de verse
+   "success" (verde), para que quede claro de un vistazo que no se puede
+   escanear hasta abrir el día de nuevo. */
+#pageConteo.inv-cerrado .inventory-bar {
+    background: var(--paper);
+    border-style: dashed;
+}
+#pageConteo.inv-cerrado .inv-state {
+    color: var(--ink-soft);
 }
 
 .inventory-actions {
@@ -1128,9 +1265,16 @@ body.modal-open {
 .historial-item-acciones {
     display: none;
     padding: 10px 14px 14px;
+    gap: 10px;
 }
 
-.historial-item.is-open .historial-item-acciones { display: block; }
+.historial-item.is-open .historial-item-acciones { display: flex; }
+
+.historial-item-acciones .btn {
+    flex: 1 1 0%;
+    width: auto;
+    min-width: 0;
+}
 
 /* Aviso de instalación de la app (PWA) — banner compacto arriba de la
    pestaña de Escanear (la que se ve primero al entrar). */
@@ -1549,15 +1693,6 @@ body.modal-open {
     .boot-loader__logo-ring { animation: none; border-top: 3px solid var(--amber); }
     .boot-loader__logo-icon { animation: none; }
     .boot-loader__bar-fill { animation: none; width: 100%; background: var(--amber); }
-}
-
-/* Badge del header en estado "cargando catálogo" (distinto de "listo" y de
-   "sin productos, subí el .txt"): dura solo hasta la primera respuesta de
-   Firestore después de loguearse. */
-.status-badge.is-loading {
-    background: var(--ink);
-    display: inline-flex;
-    align-items: center;
 }
 
 /* Filas "fantasma" con shimmer para la tabla de productos mientras se
