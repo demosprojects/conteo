@@ -1,8 +1,9 @@
 // app.js - Lógica principal del Terminal de Escaneo (multi-cliente)
 import {
     onAuthChange,
-    loginUsuario,
+    loginConUsuario,
     logoutUsuario,
+    obtenerNombreUsuario,
     escucharCatalogo,
     importarCatalogo,
     crearProducto,
@@ -23,6 +24,7 @@ let hasChanges = false;
 let pendingProduct = null;
 let pendingScanCode = null;
 let currentUser = null;
+let currentUserNombre = null; // nombre para mostrar (ej. "Kiosco Pepito"); null si no está cargado y hay que mostrar el email
 let inventarioActual = null; // { id, nombre, estado, items }
 let unsubCatalogo = null;    // función para dejar de escuchar el catálogo (onSnapshot)
 let unsubInventario = null;  // función para dejar de escuchar el inventario actual (onSnapshot)
@@ -183,7 +185,7 @@ function ocultarBootLoader() {
 
 loginForm.addEventListener('submit', async function (e) {
     e.preventDefault();
-    const email = document.getElementById('loginEmail').value.trim();
+    const usuario = document.getElementById('loginUsuario').value.trim();
     const password = document.getElementById('loginPassword').value;
 
     loginError.classList.remove('show');
@@ -198,11 +200,11 @@ loginForm.addEventListener('submit', async function (e) {
     mostrarBootLoader('Ingresando…');
 
     try {
-        await loginUsuario(email, password);
+        await loginConUsuario(usuario, password);
         // onAuthChange se encarga de mostrar la app y ocultar el boot loader
     } catch (err) {
         console.error(err);
-        loginError.textContent = 'No pudimos iniciar sesión. Revisá el email y la contraseña.';
+        loginError.textContent = 'No pudimos iniciar sesión. Revisá el usuario y la contraseña.';
         loginError.classList.add('show');
         ocultarBootLoader();
     } finally {
@@ -246,11 +248,7 @@ function activarPagina(nombre) {
         const histDesde = document.getElementById('histDesde');
         const histHasta = document.getElementById('histHasta');
         if (!histDesde.value && !histHasta.value) {
-            const ahora = new Date();
-            const hoy = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}-${String(ahora.getDate()).padStart(2, '0')}`;
-            histDesde.value = hoy;
-            histHasta.value = hoy;
-            buscarHistorial();
+            aplicarRangoHistorial(0); // atajo "Hoy": ya dispara la búsqueda
         }
     }
 
@@ -268,6 +266,24 @@ function actualizarBadgeConteo() {
     badge.style.display = cantidad > 0 ? '' : 'none';
 }
 
+// Variedad de saludos para el chip de usuario, para que no sea siempre el
+// mismo texto. Se elige uno al azar cada vez que se resuelve el nombre
+// (es decir, una vez por sesión/login, no en cada re-render).
+const SALUDOS_USUARIO = ['Hola', 'Bienvenido', 'Qué bueno verte', 'Gracias por usar Conteo+','¿Preparado para el stock de hoy?'];
+
+function mostrarSaludoUsuario(nombre) {
+    const chip = document.getElementById('userChip');
+    if (!nombre) {
+        chip.style.display = 'none';
+        return;
+    }
+    const saludo = SALUDOS_USUARIO[Math.floor(Math.random() * SALUDOS_USUARIO.length)];
+    document.getElementById('userChipAvatar').textContent = nombre.trim().charAt(0).toUpperCase();
+    document.getElementById('userChipGreeting').textContent = saludo;
+    document.getElementById('userChipName').textContent = nombre;
+    chip.style.display = 'flex';
+}
+
 onAuthChange(async function (user) {
     currentUser = user;
 
@@ -281,7 +297,18 @@ onAuthChange(async function (user) {
     if (user) {
         loginScreen.classList.add('is-hidden');
         appRoot.classList.remove('is-hidden');
-        document.getElementById('userChip').textContent = user.email;
+
+        // No mostramos el email: el chip queda oculto hasta que resuelva el
+        // nombre en Firestore para evitar el parpadeo "correo -> usuario".
+        // Si la cuenta nunca tuvo un "nombre" cargado, el chip se queda oculto
+        // (nunca cae al email como respaldo).
+        mostrarSaludoUsuario(null);
+        currentUserNombre = null;
+        obtenerNombreUsuario(user.uid).then(nombre => {
+            if (currentUser !== user) return; // se deslogueó/cambió de cuenta mientras esperábamos
+            currentUserNombre = nombre;
+            mostrarSaludoUsuario(nombre);
+        }).catch(err => console.warn('No se pudo obtener el nombre de usuario:', err));
 
         const params = new URLSearchParams(location.search);
         document.getElementById('dangerZone').style.display = params.get('reset') === '1' ? '' : 'none';
@@ -290,6 +317,8 @@ onAuthChange(async function (user) {
     } else {
         appRoot.classList.add('is-hidden');
         loginScreen.classList.remove('is-hidden');
+        currentUserNombre = null;
+        mostrarSaludoUsuario(null);
         resetEstadoApp();
     }
 });
@@ -424,6 +453,7 @@ function mostrarCargaInicial() {
 
     document.getElementById('catalogUploadPanel').style.display = '';
     document.getElementById('catalogStatus').style.display = 'none';
+    productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
 
     deshabilitarEscaneo();
     actualizarEstadoDescarga();
@@ -462,6 +492,8 @@ function renderSkeletonProductos() {
 function habilitarEscaneo() {
     document.getElementById('scannerInput').disabled = false;
     document.getElementById('buscarArticuloInput').disabled = false;
+    document.getElementById('scannerEnterBtn').disabled = false;
+    document.getElementById('buscarEnterBtn').disabled = false;
     document.getElementById('startCameraBtn').disabled = false;
     document.getElementById('downloadBtn').disabled = false;
 }
@@ -469,6 +501,8 @@ function habilitarEscaneo() {
 function deshabilitarEscaneo() {
     document.getElementById('scannerInput').disabled = true;
     document.getElementById('buscarArticuloInput').disabled = true;
+    document.getElementById('scannerEnterBtn').disabled = true;
+    document.getElementById('buscarEnterBtn').disabled = true;
     document.getElementById('startCameraBtn').disabled = true;
     document.getElementById('downloadBtn').disabled = true;
 }
@@ -481,29 +515,8 @@ function deshabilitarEscaneo() {
 // -------------------------------
 function actualizarEstadoDescarga() {
     const nuevoInventarioBtn = document.getElementById('nuevoInventarioBtn');
-    const syncBadge = document.getElementById('syncBadge');
-
     nuevoInventarioBtn.disabled = !(baseDeDatos.length > 0 && inventarioActual);
-
-    if (syncBadge) {
-        syncBadge.textContent = 'Sincronizado';
-        syncBadge.classList.add('is-synced');
-    }
 }
-
-// Los botones "Sincronizar" quedan como acción manual opcional: con los
-// listeners en tiempo real ya no hace falta tocarlos para que los datos
-// estén al día, pero los dejamos funcionando (por si alguien los toca por
-// costumbre, o para forzar un refresco visual de la tabla).
-document.getElementById('sincronizarCatalogoBtn').addEventListener('click', function () {
-    renderTablaProductos();
-    showToast('El catálogo ya se sincroniza solo en tiempo real. Esto está al día.', 'info');
-});
-
-document.getElementById('sincronizarConteoBtn').addEventListener('click', function () {
-    if (inventarioActual) sincronizarItemsDesdeInventario(inventarioActual.items || {});
-    showToast('El conteo ya se sincroniza solo en tiempo real. Esto está al día.', 'info');
-});
 
 document.getElementById('fileInput').addEventListener('change', function (e) {
     const file = e.target.files[0];
@@ -805,7 +818,50 @@ function activarTab(nombre) {
     }
 }
 
-tabCamera.addEventListener('click', () => activarTab('camera'));
+// -------------------------------
+// 3b. Mobile: el teclado tapa el input activo o el botón "Iniciar cámara".
+// El bottom-nav es position:fixed, y con elementos fijos en pantalla varios
+// navegadores mobile (sobre todo iOS Safari) no hacen bien el scroll
+// automático al enfocar un input o al abrir/cerrar el teclado. Lo forzamos
+// a mano con scrollIntoView, con un pequeño delay para esperar a que la
+// animación del teclado (o del cambio de tab) termine antes de calcular
+// posiciones.
+// -------------------------------
+function scrollElementoAlaVista(el) {
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function activarScrollAlEnfocar(input) {
+    input.addEventListener('focus', () => {
+        setTimeout(() => scrollElementoAlaVista(input), 300);
+    });
+}
+activarScrollAlEnfocar(document.getElementById('scannerInput'));
+activarScrollAlEnfocar(document.getElementById('buscarArticuloInput'));
+
+// Refuerzo con la Visual Viewport API (iOS Safari y Chrome modernos la
+// soportan): cuando el teclado abre o cierra, el viewport visual cambia de
+// tamaño. Si en ese momento hay un input de la pantalla de escaneo
+// enfocado, lo volvemos a centrar.
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+        const activo = document.activeElement;
+        if (activo && (activo.id === 'scannerInput' || activo.id === 'buscarArticuloInput')) {
+            scrollElementoAlaVista(activo);
+        }
+    });
+}
+
+tabCamera.addEventListener('click', () => {
+    // Si se venía de Código o Por nombre con el teclado abierto, primero hay
+    // que cerrarlo (blur): si el scroll al panel de cámara se calcula
+    // mientras el teclado todavía está animándose para cerrar, el resultado
+    // queda mal (el navegador todavía "cree" que el viewport es más chico).
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    activarTab('camera');
+    setTimeout(() => scrollElementoAlaVista(document.getElementById('cameraWrap')), 300);
+});
 tabManual.addEventListener('click', () => {
     activarTab('manual');
     const input = document.getElementById('scannerInput');
@@ -820,15 +876,31 @@ tabBuscar.addEventListener('click', () => {
 // -------------------------------
 // 4. Escaneo manual (teclado / lector físico tipo teclado)
 // -------------------------------
-document.getElementById('scannerInput').addEventListener('keypress', function (e) {
-    if (e.key === 'Enter') {
-        const codigoEscaneado = this.value.trim();
-        if (codigoEscaneado !== '') {
-            procesarEscaneo(codigoEscaneado);
-        }
-        this.value = '';
+// En una función aparte porque el botón "Confirmar código" (pensado para
+// mobile, donde el teclado numérico muchas veces no tiene tecla Enter)
+// tiene que disparar exactamente lo mismo que presionar Enter.
+function confirmarCodigoManual() {
+    const input = document.getElementById('scannerInput');
+    if (input.disabled) return;
+    const codigoEscaneado = input.value.trim();
+    input.value = '';
+    if (codigoEscaneado !== '') {
+        // No re-enfocamos acá: procesarEscaneo va a abrir un modal, que
+        // primero cierra el teclado a propósito (ver cerrarTecladoYAbrir).
+        // Re-enfocar el input ahora pelearía con eso y el teclado quedaría
+        // abierto tapando el modal. El input se vuelve a enfocar solo al
+        // cerrar el modal (ver refocarInputEscaneo).
+        procesarEscaneo(codigoEscaneado);
+    } else {
+        input.focus();
     }
+}
+
+document.getElementById('scannerInput').addEventListener('keypress', function (e) {
+    if (e.key === 'Enter') confirmarCodigoManual();
 });
+
+document.getElementById('scannerEnterBtn').addEventListener('click', confirmarCodigoManual);
 
 // Solo permite números (los códigos de barra son numéricos). Filtra tanto
 // lo tipeado como lo pegado, sin importar el origen (teclado, lector físico, etc.).
@@ -864,6 +936,37 @@ buscarArticuloInput.addEventListener('input', function () {
         .slice(0, 25);
 
     renderResultadosBusqueda(coincidencias, textoOriginal);
+});
+
+// "Confirmar búsqueda" (Enter físico o el botón para mobile, donde a veces
+// no hay tecla Enter visible): si quedó un solo resultado en la lista lo
+// selecciona directo; si no hay ninguno, ofrece darlo de alta como producto
+// nuevo; si hay varios, no adivina cuál — pide afinar la búsqueda.
+function confirmarBusquedaPorNombre() {
+    if (buscarArticuloInput.disabled) return;
+
+    const items = buscarResultados.querySelectorAll('.buscar-item');
+    if (items.length === 1) {
+        items[0].click();
+        return;
+    }
+
+    if (items.length === 0) {
+        const btnAgregar = buscarResultados.querySelector('button');
+        if (btnAgregar) {
+            btnAgregar.click();
+            return;
+        }
+        showToast('Escribí al menos 2 letras del nombre del producto.', 'info');
+        return;
+    }
+
+    showToast('Hay varios productos que coinciden: tocá el que corresponde.', 'info');
+}
+
+document.getElementById('buscarEnterBtn').addEventListener('click', confirmarBusquedaPorNombre);
+buscarArticuloInput.addEventListener('keypress', function (e) {
+    if (e.key === 'Enter') confirmarBusquedaPorNombre();
 });
 
 function renderResultadosBusqueda(productos, textoBuscado) {
@@ -1107,6 +1210,47 @@ function procesarEscaneo(codigo) {
 }
 
 // -------------------------------
+// 6b. Cerrar el teclado antes de abrir un modal
+// -------------------------------
+// Los modales son position:fixed centrados en el viewport. En iOS Safari (y
+// algunos Android) los elementos fixed se calculan mal mientras el teclado
+// virtual está abierto: el modal puede terminar "arriba" de lo visible y
+// hace falta scrollear o cerrar el teclado a mano para verlo entero. Para
+// evitarlo, si hay un input enfocado lo desenfocamos (cerrando el teclado)
+// y recién ahí mostramos el modal.
+function cerrarTecladoYAbrir(mostrarModal) {
+    const activo = document.activeElement;
+    const habiaTeclado = activo && activo.tagName === 'INPUT' && activo !== document.body;
+    if (habiaTeclado) activo.blur();
+
+    if (habiaTeclado) {
+        // Le damos tiempo a la animación de cierre del teclado antes de
+        // calcular la posición del modal (fixed), si no queda mal igual.
+        setTimeout(mostrarModal, 150);
+    } else {
+        mostrarModal();
+    }
+}
+
+// Al cerrar el modal de cantidad o de producto nuevo, si se llegó ahí
+// escaneando manualmente (pestaña Código o Por nombre, dentro de la página
+// Escanear), volvemos a enfocar ese input para que se pueda seguir
+// escaneando sin tocar nada más. Si el modal se abrió desde otro lado
+// (ej. corregir stock desde el catálogo) no hacemos nada.
+function refocarInputEscaneo() {
+    const pageEscanear = document.getElementById('pageEscanear');
+    if (!pageEscanear || !pageEscanear.classList.contains('is-active')) return;
+
+    if (tabManual.classList.contains('is-active')) {
+        const input = document.getElementById('scannerInput');
+        if (!input.disabled) input.focus();
+    } else if (tabBuscar.classList.contains('is-active')) {
+        if (!buscarArticuloInput.disabled) buscarArticuloInput.focus();
+    }
+}
+
+
+// -------------------------------
 // 7. Modal de cantidad (producto ya conocido)
 // -------------------------------
 const qtyModal = document.getElementById('qtyModal');
@@ -1118,35 +1262,38 @@ const qtyConfirmBtn = document.getElementById('qtyConfirm');
 let modoModalCantidad = 'sumar'; // 'sumar' (delta al escanear) | 'editar' (fijar stock exacto)
 
 function abrirModalCantidad(producto, modo = 'sumar') {
-    pendingProduct = producto;
-    modoModalCantidad = modo;
+    cerrarTecladoYAbrir(() => {
+        pendingProduct = producto;
+        modoModalCantidad = modo;
 
-    document.getElementById('qtyModalProductName').textContent = producto.articulo;
-    document.getElementById('qtyModalProductCode').textContent = producto.codigoArt;
-    document.getElementById('qtyModalCurrentStock').textContent = producto.stock_unidad;
+        document.getElementById('qtyModalProductName').textContent = producto.articulo;
+        document.getElementById('qtyModalProductCode').textContent = producto.codigoArt;
+        document.getElementById('qtyModalCurrentStock').textContent = producto.stock_unidad;
 
-    if (modo === 'editar') {
-        qtyModalModeBadge.textContent = 'Editar producto';
-        qtyModalModeBadge.classList.add('is-editing');
-        qtyModalHint.textContent = 'Corregí el stock: escribí el número final (no se suma, reemplaza el valor actual).';
-        qtyConfirmBtn.textContent = 'Guardar corrección';
-        qtyInput.value = producto.stock_unidad;
-    } else {
-        qtyModalModeBadge.textContent = 'Sumar / restar';
-        qtyModalModeBadge.classList.remove('is-editing');
-        qtyModalHint.textContent = 'Ingresá cuánto sumar o restar (usá números negativos para restar).';
-        qtyConfirmBtn.textContent = 'Confirmar';
-        qtyInput.value = 1;
-    }
+        if (modo === 'editar') {
+            qtyModalModeBadge.textContent = 'Editar producto';
+            qtyModalModeBadge.classList.add('is-editing');
+            qtyModalHint.textContent = 'Corregí el stock: escribí el número final (no se suma, reemplaza el valor actual).';
+            qtyConfirmBtn.textContent = 'Guardar corrección';
+            qtyInput.value = producto.stock_unidad;
+        } else {
+            qtyModalModeBadge.textContent = 'Sumar / restar';
+            qtyModalModeBadge.classList.remove('is-editing');
+            qtyModalHint.textContent = 'Ingresá cuánto sumar o restar (usá números negativos para restar).';
+            qtyConfirmBtn.textContent = 'Confirmar';
+            qtyInput.value = 1;
+        }
 
-    qtyModal.classList.add('open');
-    setTimeout(() => { qtyInput.focus(); qtyInput.select(); }, 50);
+        qtyModal.classList.add('open');
+        setTimeout(() => { qtyInput.focus(); qtyInput.select(); }, 50);
+    });
 }
 
 function cerrarModalCantidad() {
     qtyModal.classList.remove('open');
     pendingProduct = null;
     modoModalCantidad = 'sumar';
+    refocarInputEscaneo();
 }
 
 document.getElementById('qtyMinus').addEventListener('click', () => {
@@ -1221,20 +1368,23 @@ const newProductModal = document.getElementById('newProductModal');
 let altaSinCodigo = false; // true cuando el modal se abrió desde "Por nombre" (sin código de barras)
 
 function abrirModalProductoNuevo(codigo, descripcionPrellenada = '') {
-    altaSinCodigo = !codigo;
-    pendingScanCode = codigo || null;
-    document.getElementById('npCodigo').textContent = codigo || 'Se asignará un código interno automáticamente';
-    document.getElementById('npDescripcion').value = descripcionPrellenada;
-    document.getElementById('npUnidades').value = 'unidad';
-    document.getElementById('npStock').value = 1;
-    newProductModal.classList.add('open');
-    setTimeout(() => document.getElementById('npDescripcion').focus(), 50);
+    cerrarTecladoYAbrir(() => {
+        altaSinCodigo = !codigo;
+        pendingScanCode = codigo || null;
+        document.getElementById('npCodigo').textContent = codigo || 'Se asignará un código interno automáticamente';
+        document.getElementById('npDescripcion').value = descripcionPrellenada;
+        document.getElementById('npUnidades').value = 'unidad';
+        document.getElementById('npStock').value = 1;
+        newProductModal.classList.add('open');
+        setTimeout(() => document.getElementById('npDescripcion').focus(), 50);
+    });
 }
 
 function cerrarModalProductoNuevo() {
     newProductModal.classList.remove('open');
     pendingScanCode = null;
     altaSinCodigo = false;
+    refocarInputEscaneo();
 }
 
 document.getElementById('npCancel').addEventListener('click', cerrarModalProductoNuevo);
@@ -1441,50 +1591,117 @@ document.getElementById('downloadBtn').addEventListener('click', function () {
 // -------------------------------
 // 11. Historial de conteos finalizados (.txt anteriores)
 // -------------------------------
+
+// Guardamos el último resultado buscado para poder abrir/cerrar tarjetas sin
+// volver a golpear Firestore ni reconstruir el HTML de items ya armados.
+let historialResultados = [];
+let historialUltimoRango = null; // 'DESDE|HASTA', evita repetir la misma búsqueda dos veces seguidas
+
+function formatearFechaInput(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+// Atajos "Hoy / Últimos 7 días / Últimos 30 días" en la sección Más: cargan
+// las fechas y disparan la búsqueda en un solo toque.
+function aplicarRangoHistorial(diasAtras) {
+    const hasta = new Date();
+    const desde = new Date();
+    desde.setDate(desde.getDate() - Number(diasAtras));
+
+    document.getElementById('histDesde').value = formatearFechaInput(desde);
+    document.getElementById('histHasta').value = formatearFechaInput(hasta);
+
+    document.querySelectorAll('#historialChips .chip').forEach(chip => {
+        chip.classList.toggle('is-active', chip.dataset.rango === String(diasAtras));
+    });
+
+    buscarHistorial();
+}
+
+document.querySelectorAll('#historialChips .chip').forEach(chip => {
+    chip.addEventListener('click', function () {
+        aplicarRangoHistorial(chip.dataset.rango);
+    });
+});
+
+// Si el usuario toca las fechas a mano, ningún chip queda "activo".
+['histDesde', 'histHasta'].forEach(id => {
+    document.getElementById(id).addEventListener('input', function () {
+        document.querySelectorAll('#historialChips .chip').forEach(chip => chip.classList.remove('is-active'));
+    });
+});
+
 async function buscarHistorial() {
     if (!currentUser) return;
 
     const desdeVal = document.getElementById('histDesde').value;
     const hastaVal = document.getElementById('histHasta').value;
+
+    // Evita relanzar la misma consulta a Firestore si ya se hizo (p. ej. al
+    // volver a entrar a "Más" con el mismo rango ya buscado).
+    const claveRango = `${desdeVal}|${hastaVal}`;
+    if (claveRango === historialUltimoRango) return;
+
     const desde = desdeVal ? new Date(`${desdeVal}T00:00:00`) : null;
     const hasta = hastaVal ? new Date(`${hastaVal}T23:59:59`) : null;
 
     const vacio = document.getElementById('historialVacio');
+    const resumen = document.getElementById('historialResumen');
     vacio.style.display = '';
     vacio.textContent = 'Buscando…';
+    resumen.style.display = 'none';
+    document.querySelectorAll('.historial-item').forEach(el => el.remove());
 
     const btn = document.getElementById('histBuscarBtn');
-    const textoOriginal = btn.textContent;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner spinner--dark"></span>Buscando…';
 
     try {
         const resultados = await obtenerInventariosCerrados(currentUser.uid, desde, hasta);
+        historialUltimoRango = claveRango;
         renderHistorial(resultados);
     } catch (err) {
         console.error(err);
+        historialUltimoRango = null;
         vacio.textContent = 'No se pudo traer el historial.';
         vacio.style.display = '';
     } finally {
         btn.disabled = false;
-        btn.textContent = textoOriginal;
+        btn.textContent = 'Buscar conteos';
     }
 }
 
-document.getElementById('histBuscarBtn').addEventListener('click', buscarHistorial);
+document.getElementById('histBuscarBtn').addEventListener('click', function () {
+    // Búsqueda manual: forzamos que corra aunque el rango sea igual al último.
+    historialUltimoRango = null;
+    buscarHistorial();
+});
 
 function renderHistorial(resultados) {
+    historialResultados = resultados;
+
     const lista = document.getElementById('historialLista');
     const vacio = document.getElementById('historialVacio');
+    const resumen = document.getElementById('historialResumen');
 
     lista.querySelectorAll('.historial-item').forEach(el => el.remove());
 
     if (resultados.length === 0) {
+        resumen.style.display = 'none';
         vacio.textContent = 'No hay conteos finalizados en ese rango de fechas.';
         vacio.style.display = '';
         return;
     }
     vacio.style.display = 'none';
+    resumen.style.display = '';
+    resumen.textContent = `${resultados.length} conteo${resultados.length === 1 ? '' : 's'} encontrado${resultados.length === 1 ? '' : 's'}`;
+
+    // Fragmento único para insertar todas las tarjetas de una sola vez (un
+    // solo reflow en vez de uno por tarjeta) y las filas de productos de
+    // cada conteo se arman recién cuando el usuario lo abre, no antes: con
+    // historiales largos esto evita construir HTML que la mayoría de las
+    // veces nadie llega a ver.
+    const frag = document.createDocumentFragment();
 
     resultados.forEach((inv, index) => {
         const items = Object.values(inv.items || {});
@@ -1494,37 +1711,31 @@ function renderHistorial(resultados) {
 
         const wrapper = document.createElement('div');
         wrapper.className = 'historial-item';
-        // Entrada escalonada: cada tarjeta aparece un poco después que la
-        // anterior en vez de todas de golpe. Se limita el delay a los
-        // primeros 10 items para que una lista larga no tarde una
-        // eternidad en terminar de aparecer.
-        wrapper.style.animationDelay = `${Math.min(index, 10) * 45}ms`;
-
-        const filasProductos = items.map(it => `
-            <tr>
-                <td>${it.descripcion}<span class="product-code">${it.codigo}</span></td>
-                <td class="stock-cell">${it.stock}</td>
-            </tr>
-        `).join('');
+        wrapper.dataset.index = index;
+        // Entrada escalonada, limitada a las primeras tarjetas para que un
+        // historial largo no tarde una eternidad en terminar de aparecer.
+        wrapper.style.animationDelay = `${Math.min(index, 8) * 40}ms`;
 
         wrapper.innerHTML = `
             <div class="historial-item-header">
-                <div>
+                <div class="historial-item-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                </div>
+                <div class="historial-item-info">
                     <div class="historial-item-nombre">${inv.nombre}</div>
                     <div class="historial-item-meta">${fechaCierre ? fechaCierre.toLocaleString('es-AR', { hour12: false }) : '—'} · ${items.length} producto(s)</div>
                 </div>
-                <div class="historial-item-acciones">
-                    <button type="button" class="btn btn--ghost btn--sm hist-descargar">Descargar</button>
-                </div>
+                <svg class="historial-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
             </div>
-            <div class="historial-item-productos">
-                <table>${filasProductos || '<tr><td colspan="2" class="empty-row">Sin productos</td></tr>'}</table>
+            <div class="historial-item-productos" id="historialProductos${index}"></div>
+            <div class="historial-item-acciones">
+                <button type="button" class="btn btn--ghost btn--sm btn--full hist-descargar">Descargar .txt</button>
             </div>
         `;
 
-        wrapper.querySelector('.historial-item-header').addEventListener('click', function (e) {
-            if (e.target.closest('.hist-descargar')) return;
-            wrapper.classList.toggle('is-open');
+        wrapper.querySelector('.historial-item-header').addEventListener('click', function () {
+            const abierta = wrapper.classList.toggle('is-open');
+            if (abierta) renderProductosHistorial(index);
         });
 
         wrapper.querySelector('.hist-descargar').addEventListener('click', function (e) {
@@ -1540,17 +1751,43 @@ function renderHistorial(resultados) {
             descargarTxt(generarContenidoTxt(itemsCanonicos), `inventario_${inv.id}.txt`);
         });
 
-        lista.appendChild(wrapper);
+        frag.appendChild(wrapper);
     });
+
+    lista.appendChild(frag);
+}
+
+// Arma la tabla de productos de un conteo recién al abrirlo, y la deja
+// marcada para no reconstruirla si se cierra y se vuelve a abrir.
+function renderProductosHistorial(index) {
+    const cont = document.getElementById(`historialProductos${index}`);
+    if (!cont || cont.dataset.armado === '1') return;
+
+    const inv = historialResultados[index];
+    const items = Object.values(inv.items || {});
+
+    const filas = items.map(it => `
+        <tr>
+            <td>${it.descripcion}<span class="product-code">${it.codigo}</span></td>
+            <td class="stock-cell">${it.stock}</td>
+        </tr>
+    `).join('');
+
+    cont.innerHTML = `<table>${filas || '<tr><td colspan="2" class="empty-row">Sin productos</td></tr>'}</table>`;
+    cont.dataset.armado = '1';
 }
 
 function resetHistorial() {
     document.getElementById('histDesde').value = '';
     document.getElementById('histHasta').value = '';
+    document.querySelectorAll('#historialChips .chip').forEach(chip => chip.classList.remove('is-active'));
     document.querySelectorAll('.historial-item').forEach(el => el.remove());
+    document.getElementById('historialResumen').style.display = 'none';
+    historialResultados = [];
+    historialUltimoRango = null;
     const vacio = document.getElementById('historialVacio');
     vacio.style.display = '';
-    vacio.textContent = 'Elegí un rango de fechas y tocá "Buscar conteos".';
+    vacio.textContent = 'Elegí un rango de fechas o tocá un atajo arriba.';
 }
 
 // -------------------------------
@@ -1561,7 +1798,7 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
 
     const confirmado = await mostrarConfirmPeligroso({
         titulo: 'Borrar todo',
-        mensaje: `Esto borra TODOS los productos y TODOS los inventarios de ${currentUser.email}. No se puede deshacer.`,
+        mensaje: `Esto borra TODOS los productos y TODOS los inventarios de ${currentUserNombre || currentUser.email}. No se puede deshacer.`,
         palabraConfirmacion: 'BORRAR'
     });
     if (!confirmado) {
@@ -1599,6 +1836,123 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
         btn.textContent = 'Borrar catálogo e inventarios';
     }
 });
+
+// -------------------------------
+// Bloqueo de scroll de fondo mientras hay un modal abierto: aplica a
+// cualquiera de los .modal-overlay (cantidad, producto nuevo, confirmación,
+// zona de peligro) sin tener que tocar cada función que los abre/cierra —
+// se detecta solo mirando la clase "open" de cada overlay.
+// -------------------------------
+(function () {
+    const overlays = document.querySelectorAll('.modal-overlay');
+    if (!overlays.length) return;
+
+    let scrollGuardado = 0;
+
+    function hayModalAbierto() {
+        return Array.from(overlays).some(el => el.classList.contains('open'));
+    }
+
+    function bloquearScroll() {
+        if (document.body.classList.contains('modal-open')) return;
+        scrollGuardado = window.scrollY;
+        document.body.style.top = `-${scrollGuardado}px`;
+        document.body.classList.add('modal-open');
+    }
+
+    function desbloquearScroll() {
+        if (!document.body.classList.contains('modal-open')) return;
+        document.body.classList.remove('modal-open');
+        document.body.style.top = '';
+        window.scrollTo(0, scrollGuardado);
+    }
+
+    function sincronizarBloqueo() {
+        if (hayModalAbierto()) bloquearScroll();
+        else desbloquearScroll();
+    }
+
+    const observer = new MutationObserver(sincronizarBloqueo);
+    overlays.forEach(el => observer.observe(el, { attributes: true, attributeFilter: ['class'] }));
+})();
+
+// -------------------------------
+// PWA: aviso "Instalar app" (sección Más)
+// -------------------------------
+(function () {
+    const CLAVE_DESCARTADO = 'conteoplus_install_dismissed';
+    const installCard = document.getElementById('installCard');
+    const installBtn = document.getElementById('installBtn');
+    const installMsg = document.getElementById('installCardMsg');
+    const installCloseBtn = document.getElementById('installCloseBtn');
+    if (!installCard) return;
+
+    let deferredPrompt = null;
+
+    const esStandalone = window.matchMedia('(display-mode: standalone)').matches
+        || window.navigator.standalone === true; // Safari iOS
+
+    const esIOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent) && !window.MSStream;
+
+    function estaDescartado() {
+        try { return localStorage.getItem(CLAVE_DESCARTADO) === '1'; } catch (e) { return false; }
+    }
+
+    function marcarDescartado() {
+        try { localStorage.setItem(CLAVE_DESCARTADO, '1'); } catch (e) { /* localStorage no disponible, no pasa nada */ }
+    }
+
+    if (installCloseBtn) {
+        installCloseBtn.addEventListener('click', function () {
+            marcarDescartado();
+            installCard.style.display = 'none';
+        });
+    }
+
+    // Ya instalada (se abrió como app) o el usuario ya cerró el aviso antes:
+    // no mostramos nada.
+    if (esStandalone || estaDescartado()) return;
+
+    if (esIOS) {
+        // Safari en iOS no dispara "beforeinstallprompt": no hay forma de
+        // instalar con un solo toque, así que mostramos el paso manual.
+        if (installMsg) installMsg.textContent = 'Tocá el ícono de compartir de Safari (⬆) y elegí "Agregar a inicio" para instalarla.';
+        if (installBtn) installBtn.style.display = 'none';
+        installCard.style.display = '';
+        return;
+    }
+
+    // Chrome/Edge/Android: capturamos el evento del navegador y lo disparamos
+    // recién cuando el usuario toca nuestro botón.
+    window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault();
+        deferredPrompt = e;
+        installCard.style.display = '';
+    });
+
+    if (installBtn) {
+        installBtn.addEventListener('click', async function () {
+            if (!deferredPrompt) return;
+            installBtn.disabled = true;
+            deferredPrompt.prompt();
+            try {
+                const { outcome } = await deferredPrompt.userChoice;
+                if (outcome === 'accepted') {
+                    showToast('¡Listo! Conteo+ se está instalando.', 'success');
+                    installCard.style.display = 'none';
+                }
+            } finally {
+                deferredPrompt = null;
+                installBtn.disabled = false;
+            }
+        });
+    }
+
+    window.addEventListener('appinstalled', function () {
+        installCard.style.display = 'none';
+        marcarDescartado();
+    });
+})();
 
 // -------------------------------
 // PWA: registro del Service Worker
