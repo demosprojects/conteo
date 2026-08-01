@@ -317,19 +317,42 @@ function nombreConteo() {
 // usa la app). Si dos dispositivos llaman a esto a la vez, el segundo setDoc
 // simplemente pisa al primero con los mismos datos (mismo ID) — no genera
 // duplicados como pasaba antes con addDoc.
+//
+// Arranca en estado "cerrado": no se puede escanear hasta que alguien toque
+// "Abrir día" (ver abrirInventario). Antes acá se arrancaba directo en
+// "abierto", que era la causa de que el conteo quedara siempre corriendo sin
+// que nadie lo hubiera pedido.
 export async function asegurarInventarioActual(uid) {
     const ref = refInventarioActual(uid);
     const snap = await getDoc(ref);
     if (!snap.exists()) {
         await setDoc(ref, {
             usuario: uid,
-            estado: "abierto",
-            nombre: nombreConteo(),
-            fecha: serverTimestamp(),
+            estado: "cerrado",
+            nombre: null,
+            fecha: null,
             fechaCierre: null,
             items: {}
         });
     }
+}
+
+// Abre el día: pasa el documento "actual" a estado "abierto" con un nombre y
+// fecha nuevos, listo para escanear. Se puede llamar tanto si el documento
+// venía "cerrado" (caso normal) como si por algún motivo no existía todavía.
+// A diferencia de cerrarInventario, acá no hay nada que archivar: abrir el
+// día no pisa ningún conteo anterior porque, al cerrar, ese conteo ya quedó
+// guardado en el Historial.
+export async function abrirInventario(uid) {
+    const ref = refInventarioActual(uid);
+    await setDoc(ref, {
+        usuario: uid,
+        estado: "abierto",
+        nombre: nombreConteo(),
+        fecha: serverTimestamp(),
+        fechaCierre: null,
+        items: {}
+    });
 }
 
 // Escucha el inventario "actual" del usuario EN TIEMPO REAL. Cada escaneo
@@ -352,46 +375,70 @@ export function escucharInventarioActual(uid, callback, onError) {
     });
 }
 
-// Cierra el conteo actual y abre uno nuevo, todo en una única transacción
-// atómica: o pasan las dos cosas, o no pasa ninguna. Esto evita que dos
+// Cierra el conteo actual (el día), todo en una única transacción atómica:
+// o pasan las dos cosas de abajo, o no pasa ninguna. Esto evita que dos
 // dispositivos finalizando "al mismo tiempo" pisen datos entre sí.
 //
-// 1) El contenido actual (items, nombre, fecha) se archiva como un
-//    documento nuevo e independiente con estado "cerrado" — eso es lo que
-//    después aparece en el Historial.
-// 2) El documento "actual" (uid + "_actual") se resetea vacío para el
-//    próximo conteo, EN EL MISMO ID de siempre, así todos los dispositivos
-//    quedan mirando el nuevo conteo automáticamente por el listener de
-//    arriba, sin que nadie tenga que recargar la página.
+// 1) Si hubo productos modificados, el contenido actual (items, nombre,
+//    fecha) se archiva como un documento nuevo e independiente con estado
+//    "cerrado" — eso es lo que después aparece en el Historial. Si NO hubo
+//    ningún producto modificado, este paso se salta: no tiene sentido
+//    guardar un registro vacío que solo ocupa espacio en la base.
+// 2) El documento "actual" (uid + "_actual") se resetea vacío y queda en
+//    estado "cerrado", EN EL MISMO ID de siempre. A diferencia de antes, acá
+//    NO se vuelve a abrir un conteo nuevo solo: el escaneo queda bloqueado
+//    en todos los dispositivos hasta que alguien toque "Abrir día" (ver
+//    abrirInventario). Eso es lo que evita que el conteo quede siempre
+//    corriendo.
+//
+// Devuelve true si se archivó un registro en el Historial, false si se
+// saltó por no haber cambios (útil para avisarle al usuario qué pasó).
 export async function cerrarInventario(uid) {
     const actualRef = refInventarioActual(uid);
     const historialRef = doc(collection(db, "inventarios"));
 
-    await runTransaction(db, async (tx) => {
+    return await runTransaction(db, async (tx) => {
         const snap = await tx.get(actualRef);
         if (!snap.exists()) {
             throw new Error("No hay inventario abierto para cerrar.");
         }
         const datos = snap.data();
+        const huboCambios = !!datos.items && Object.keys(datos.items).length > 0;
 
-        tx.set(historialRef, {
-            usuario: uid,
-            estado: "cerrado",
-            nombre: datos.nombre,
-            fecha: datos.fecha || serverTimestamp(),
-            fechaCierre: serverTimestamp(),
-            items: datos.items || {}
-        });
+        if (huboCambios) {
+            tx.set(historialRef, {
+                usuario: uid,
+                estado: "cerrado",
+                nombre: datos.nombre,
+                fecha: datos.fecha || serverTimestamp(),
+                fechaCierre: serverTimestamp(),
+                items: datos.items || {}
+            });
+        }
 
         tx.set(actualRef, {
             usuario: uid,
-            estado: "abierto",
-            nombre: nombreConteo(),
-            fecha: serverTimestamp(),
+            estado: "cerrado",
+            nombre: null,
+            fecha: null,
             fechaCierre: null,
             items: {}
         });
+
+        return huboCambios;
     });
+}
+
+// Borra UN conteo puntual del Historial (irreversible). Distinto de
+// borrarInventariosCompleto, que borra todo de golpe y es solo para testing.
+export async function eliminarInventario(inventarioId) {
+    try {
+        await deleteDoc(doc(db, "inventarios", inventarioId));
+        return true;
+    } catch (e) {
+        console.error("❌ Error eliminando inventario del historial:", e);
+        return false;
+    }
 }
 
 // Historial de conteos ya finalizados (cada uno equivale a un .txt descargado).
