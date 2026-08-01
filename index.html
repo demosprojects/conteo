@@ -54,14 +54,13 @@
 
         <span class="eyebrow">Conteo+ | Control de inventario</span>
         <h1>Ingresá a tu cuenta</h1>
-        <p class="hint">Accedé con las credenciales que te proporcionaron.</p>
 
         <form id="loginForm">
             <div class="field-group">
                 <label class="field-label" for="loginUsuario">Usuario</label>
                 <div class="input-with-icon">
                     <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
-                    <input type="text" id="loginUsuario" class="manual-input has-icon" required autocomplete="username" autocapitalize="none" autofocus placeholder="tu usuario">
+                    <input type="text" id="loginUsuario" class="manual-input has-icon" required autocomplete="username" autocapitalize="none" placeholder="tu usuario">
                 </div>
             </div>
             <div class="field-group">
@@ -82,7 +81,7 @@
         <div class="login-support">
             <a class="login-support-link" href="https://wa.me/5493644539325?text=Hola%2C%20necesito%20ayuda%20para%20ingresar%20a%20Conteo%2B" target="_blank" rel="noopener noreferrer">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-                <span>¿No podés ingresar? Escribinos por WhatsApp</span>
+                <span>¿No podés ingresar? Contactate.</span>
             </a>
         </div>
     </div>
@@ -104,6 +103,16 @@
         toggleBtn.setAttribute('aria-pressed', String(mostrar));
         toggleBtn.setAttribute('aria-label', mostrar ? 'Ocultar contraseña' : 'Mostrar contraseña');
     });
+})();
+
+// Foco automático en el campo de usuario, pero solo en desktop: en mobile
+// dispara el teclado apenas carga la pantalla y tapa media pantalla antes
+// de que el usuario llegue a ver el formulario completo.
+(function () {
+    var usuarioInput = document.getElementById('loginUsuario');
+    if (usuarioInput && window.matchMedia('(pointer: fine)').matches) {
+        usuarioInput.focus();
+    }
 })();
 </script>
 
@@ -132,6 +141,22 @@
 
         <!-- Página: Escanear (landing por defecto) -->
         <section class="page is-active" id="pageEscanear" data-page="escanear">
+
+            <!-- Aviso de instalación de la app (PWA) -->
+            <div class="install-banner" id="installCard" style="display:none;">
+                <button type="button" class="install-close" id="installCloseBtn" aria-label="Cerrar aviso">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+                <div class="install-banner__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+                </div>
+                <div class="install-banner__text">
+                    <strong>Instalá Conteo+</strong>
+                    <p id="installCardMsg">Agregala a la pantalla de inicio: entra más rápido y sin la barra del navegador.</p>
+                </div>
+                <button type="button" class="btn btn--amber btn--sm install-banner__btn" id="installBtn">Instalar</button>
+            </div>
+
             <div class="card">
                 <span class="card__step">Escanear</span>
                 <h2>Código de barras</h2>
@@ -270,23 +295,6 @@
 
         <!-- Página: Más (historial y ajustes) -->
         <section class="page" id="pageMas" data-page="mas">
-
-            <!-- Aviso de instalación de la app (PWA) -->
-            <div class="card card--install" id="installCard" style="display:none;">
-                <button type="button" class="install-close" id="installCloseBtn" aria-label="Cerrar aviso">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                </button>
-                <div class="install-card__body">
-                    <div class="install-card__icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
-                    </div>
-                    <div class="install-card__text">
-                        <h3>Instalá Conteo+</h3>
-                        <p id="installCardMsg">Agregala a la pantalla de inicio para abrirla como una app: entra más rápido y sin la barra del navegador.</p>
-                    </div>
-                </div>
-                <button type="button" class="btn btn--amber btn--full" id="installBtn">Instalar app</button>
-            </div>
 
             <div class="card" id="historialCard">
                 <span class="card__step">Historial</span>
