@@ -10,11 +10,13 @@ import {
     eliminarProducto,
     actualizarStockProducto,
     asegurarInventarioActual,
+    abrirInventario,
     escucharInventarioActual,
     cerrarInventario,
     actualizarItemInventario,
     eliminarItemInventario,
     obtenerInventariosCerrados,
+    eliminarInventario,
     borrarCatalogoCompleto,
     borrarInventariosCompleto
 } from './firebase.js';
@@ -104,17 +106,42 @@ function normalizarCodigoProducto(producto) {
 // -------------------------------
 // Toasts
 // -------------------------------
+const TOAST_ICONOS = {
+    success: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    error: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+    info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'
+};
+
 function showToast(message, type = 'info') {
     const container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    toast.textContent = message;
+
+    const icono = TOAST_ICONOS[type] || TOAST_ICONOS.info;
+    toast.innerHTML = `
+        <span class="toast-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icono}</svg>
+        </span>
+        <span class="toast-message"></span>
+        <button type="button" class="toast-close" aria-label="Cerrar aviso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+    `;
+    // El mensaje puede incluir cualquier texto (ej. nombre de producto
+    // escrito por el usuario), así que va por textContent y no por el
+    // template de arriba, para no abrir la puerta a HTML/inyección.
+    toast.querySelector('.toast-message').textContent = message;
+
     container.appendChild(toast);
 
-    setTimeout(() => {
+    const cerrarToast = () => {
+        if (toast.classList.contains('fade-out')) return;
         toast.classList.add('fade-out');
         setTimeout(() => toast.remove(), 200);
-    }, 3200);
+    };
+
+    toast.querySelector('.toast-close').addEventListener('click', cerrarToast);
+    setTimeout(cerrarToast, 3200);
 }
 
 // -------------------------------
@@ -129,6 +156,22 @@ function generarContenidoTxt(items) {
         contenido += `${it.registrado || ''};${it.hora || ''};${it.codigo};${it.descripcion};${it.unidades};${it.stock};\n`;
     });
     return contenido;
+}
+
+// Arma un nombre de archivo único por conteo a partir de su fecha/hora de
+// apertura, ej. "inventario_2026-08-01_09-30.txt". Así, si en un mismo día
+// abrís y cerrás el conteo varias veces (turno mañana, turno tarde), cada
+// .txt descargado queda identificado por separado en vez de pisarse todos
+// con el mismo nombre genérico.
+function nombreArchivoInventario(inv, prefijo) {
+    const origen = inv?.fecha;
+    const fecha = (origen && typeof origen.toDate === 'function') ? origen.toDate() : new Date();
+    const y = fecha.getFullYear();
+    const m = String(fecha.getMonth() + 1).padStart(2, '0');
+    const d = String(fecha.getDate()).padStart(2, '0');
+    const hh = String(fecha.getHours()).padStart(2, '0');
+    const mm = String(fecha.getMinutes()).padStart(2, '0');
+    return `${prefijo}_${y}-${m}-${d}_${hh}-${mm}.txt`;
 }
 
 function descargarTxt(contenido, nombreArchivo) {
@@ -218,10 +261,10 @@ document.getElementById('logoutBtn').addEventListener('click', function () {
 });
 
 // -------------------------------
-// 0b. Navegación por páginas (Escanear / Productos / Conteo / Más)
+// 0b. Navegación por páginas (Escanear / Conteo / Productos / Historial)
 // -------------------------------
 const bottomNav = document.getElementById('bottomNav');
-const paginas = ['escanear', 'productos', 'conteo', 'mas'];
+const paginas = ['escanear', 'conteo', 'productos', 'mas'];
 
 function activarPagina(nombre) {
     if (!paginas.includes(nombre)) nombre = 'escanear';
@@ -241,7 +284,7 @@ function activarPagina(nombre) {
         detenerCamara();
     }
 
-    // Si entramos a "Más" y todavía no se buscó nada, precargamos el rango de
+    // Si entramos a "Historial" y todavía no se buscó nada, precargamos el rango de
     // hoy y disparamos la búsqueda: así en la PC del mostrador el historial
     // aparece solo, sin tener que tocar fechas ni el botón "Buscar conteos".
     if (nombre === 'mas' && currentUser) {
@@ -269,7 +312,7 @@ function actualizarBadgeConteo() {
 // Variedad de saludos para el chip de usuario, para que no sea siempre el
 // mismo texto. Se elige uno al azar cada vez que se resuelve el nombre
 // (es decir, una vez por sesión/login, no en cada re-render).
-const SALUDOS_USUARIO = ['Hola', 'Bienvenido', 'Qué bueno verte', 'Gracias por usar Conteo+','¿Preparado para el stock de hoy?'];
+const SALUDOS_USUARIO = ['Hola', 'Bienvenido', 'Qué bueno verte', 'Gracias por usar Conteo+'];
 
 function mostrarSaludoUsuario(nombre) {
     const chip = document.getElementById('userChip');
@@ -420,6 +463,7 @@ function resetEstadoApp() {
     productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
     resetHistorial();
     deshabilitarEscaneo();
+    actualizarEstadoDescarga();
     const dbStatus = document.getElementById('dbStatus');
     dbStatus.innerText = 'Sin productos · 0 productos';
     dbStatus.classList.remove('is-ready', 'is-loading');
@@ -440,7 +484,7 @@ function mostrarCatalogoListo() {
     document.getElementById('catalogStatus').style.display = 'flex';
     document.getElementById('catalogCount').textContent = baseDeDatos.length;
 
-    habilitarEscaneo();
+    actualizarEstadoEscaneo();
     renderTablaProductos();
     actualizarEstadoDescarga();
 }
@@ -509,13 +553,35 @@ function deshabilitarEscaneo() {
 
 // -------------------------------
 // 1b. Estado de sincronización: ahora es automático (listeners en tiempo
-// real de Firestore), así que el botón "Finalizar" se habilita apenas hay
-// catálogo e inventario cargados — ya no hace falta un paso manual de
-// "Sincronizar" antes de poder finalizar/descargar.
+// real de Firestore), así que el botón "Cerrar día" se habilita apenas hay
+// catálogo e inventario abierto — ya no hace falta un paso manual de
+// "Sincronizar" antes de poder cerrar/descargar.
 // -------------------------------
 function actualizarEstadoDescarga() {
-    const nuevoInventarioBtn = document.getElementById('nuevoInventarioBtn');
-    nuevoInventarioBtn.disabled = !(baseDeDatos.length > 0 && inventarioActual);
+    const cerrarDiaBtn = document.getElementById('nuevoInventarioBtn');
+    const abrirDiaBtn = document.getElementById('abrirDiaBtn');
+    const hayInventarioAbierto = inventarioActual && inventarioActual.estado === 'abierto';
+
+    cerrarDiaBtn.disabled = !(baseDeDatos.length > 0 && hayInventarioAbierto);
+    cerrarDiaBtn.style.display = hayInventarioAbierto ? '' : 'none';
+
+    abrirDiaBtn.disabled = !(baseDeDatos.length > 0 && inventarioActual && inventarioActual.estado === 'cerrado');
+    abrirDiaBtn.style.display = hayInventarioAbierto ? 'none' : '';
+}
+
+// El escaneo (cámara + input manual) solo tiene que estar habilitado si hay
+// catálogo cargado Y el día está abierto. Se llama tanto cuando cambia el
+// catálogo como cuando cambia el estado del inventario (abrir/cerrar día),
+// para que ambos dispositivos (celu y PC) queden bloqueados o habilitados al
+// instante, sin recargar la página.
+function actualizarEstadoEscaneo() {
+    const hayInventarioAbierto = inventarioActual && inventarioActual.estado === 'abierto';
+    if (baseDeDatos.length > 0 && hayInventarioAbierto) {
+        habilitarEscaneo();
+    } else {
+        deshabilitarEscaneo();
+        if (isScanning) detenerCamara();
+    }
 }
 
 document.getElementById('fileInput').addEventListener('change', function (e) {
@@ -600,8 +666,18 @@ async function parseTxtYSubir(text) {
 // 2. Inventario del día (colección "inventarios")
 // -------------------------------
 function renderInventarioBar() {
-    document.getElementById('invName').textContent = inventarioActual.nombre;
-    document.getElementById('invState').textContent = inventarioActual.estado;
+    const estaAbierto = inventarioActual.estado === 'abierto';
+    document.getElementById('invName').textContent = estaAbierto
+        ? inventarioActual.nombre
+        : 'Día cerrado';
+    document.getElementById('invState').textContent = estaAbierto
+        ? 'Abierto'
+        : 'Tocá "Abrir día" para empezar a escanear';
+
+    document.getElementById('pageConteo').classList.toggle('inv-cerrado', !estaAbierto);
+
+    actualizarEstadoEscaneo();
+    actualizarEstadoDescarga();
 }
 
 // Reconstruye por completo la tabla de "Modificaciones" y el Map en memoria
@@ -735,22 +811,22 @@ async function eliminarModificacion(codigo, fila) {
 }
 
 document.getElementById('nuevoInventarioBtn').addEventListener('click', async function () {
-    if (!currentUser || !inventarioActual) return;
+    if (!currentUser || !inventarioActual || inventarioActual.estado !== 'abierto') return;
 
     const cantidad = productosModificados.size;
     const mensajeConfirmar = cantidad > 0
-        ? `Se va a cerrar este conteo con ${cantidad} producto(s) modificado(s). ¿Confirmás?`
-        : 'No modificaste ningún producto en este conteo. ¿Igual querés finalizarlo?';
+        ? `Se va a cerrar el día con ${cantidad} producto(s) modificado(s). El escaneo va a quedar bloqueado hasta que vuelvas a abrir el día. ¿Confirmás?`
+        : 'No modificaste ningún producto en este conteo. ¿Igual querés cerrar el día?';
     const confirmado = await mostrarConfirm({
-        titulo: 'Finalizar conteo',
+        titulo: 'Cerrar día',
         mensaje: mensajeConfirmar,
-        textoConfirmar: 'Finalizar'
+        textoConfirmar: 'Cerrar día'
     });
     if (!confirmado) return;
 
     // Descargar el .txt en este dispositivo es opcional: normalmente el conteo
     // se hace desde el celular y el .txt se termina bajando desde la PC del
-    // mostrador (pestaña "Más" → Historial), así que preguntamos en vez de
+    // mostrador (pestaña "Historial"), así que preguntamos en vez de
     // descargar siempre.
     const descargarAca = cantidad > 0 && await mostrarConfirm({
         titulo: 'Descargar .txt',
@@ -760,22 +836,43 @@ document.getElementById('nuevoInventarioBtn').addEventListener('click', async fu
 
     try {
         if (descargarAca) {
-            descargarTxt(generarContenidoTxt(productosModificadosACanonico()), 'inventario_actualizado.txt');
+            descargarTxt(generarContenidoTxt(productosModificadosACanonico()), nombreArchivoInventario(inventarioActual, 'inventario'));
         }
 
-        // cerrarInventario archiva el conteo actual en el Historial y
-        // resetea el mismo documento "actual" para el próximo conteo, todo
-        // en una transacción atómica. No hace falta crear nada a mano: el
-        // listener de escucharInventarioActual va a recibir el reseteo solo
-        // (en este dispositivo y en cualquier otro conectado) y va a limpiar
-        // la tabla de "Modificaciones" automáticamente.
-        await cerrarInventario(currentUser.uid);
+        // cerrarInventario archiva el conteo actual en el Historial (solo si
+        // hubo productos modificados) y deja el documento "actual" en estado
+        // "cerrado" (ya NO arranca uno nuevo solo). El listener de
+        // escucharInventarioActual recibe ese cambio al instante en este
+        // dispositivo y en cualquier otro conectado: limpia la tabla de
+        // "Modificaciones" y bloquea el escaneo hasta que alguien toque
+        // "Abrir día".
+        const archivado = await cerrarInventario(currentUser.uid);
         stockOriginalPorCodigo.clear();
         productosNuevosEnEsteConteo.clear();
-        showToast('Conteo finalizado. Nuevo conteo iniciado.', 'success');
+        showToast(
+            archivado
+                ? 'Día cerrado. Tocá "Abrir día" cuando quieras empezar el próximo conteo.'
+                : 'Día cerrado sin cambios: no se guardó nada en el Historial. Tocá "Abrir día" para el próximo conteo.',
+            'success'
+        );
     } catch (err) {
         console.error(err);
-        showToast('No se pudo finalizar el conteo.', 'error');
+        showToast('No se pudo cerrar el día.', 'error');
+    }
+});
+
+document.getElementById('abrirDiaBtn').addEventListener('click', async function () {
+    if (!currentUser || !inventarioActual || inventarioActual.estado === 'abierto') return;
+
+    try {
+        // abrirInventario resetea el documento "actual" a estado "abierto"
+        // con nombre y fecha nuevos. El listener de escucharInventarioActual
+        // se entera solo en todos los dispositivos conectados.
+        await abrirInventario(currentUser.uid);
+        showToast('Día abierto. ¡A escanear!', 'success');
+    } catch (err) {
+        console.error(err);
+        showToast('No se pudo abrir el día.', 'error');
     }
 });
 
@@ -1112,17 +1209,17 @@ const startCameraBtn = document.getElementById('startCameraBtn');
 const stopCameraBtn = document.getElementById('stopCameraBtn');
 const cameraWrap = document.getElementById('cameraWrap');
 
+// Sólo los formatos que realmente usan tus productos. Cuantos menos formatos,
+// menos combinaciones prueba el decoder en cada frame = detección más rápida.
+// Si en algún momento aparecen productos con otro tipo de código, se puede
+// sumar acá (pero cada formato agregado suma unos ms de procesamiento por frame).
 const FORMATOS_CODIGO_BARRAS = (typeof Html5QrcodeSupportedFormats !== 'undefined') ? [
-    Html5QrcodeSupportedFormats.CODE_128,
-    Html5QrcodeSupportedFormats.CODE_39,
-    Html5QrcodeSupportedFormats.CODE_93,
     Html5QrcodeSupportedFormats.EAN_13,
     Html5QrcodeSupportedFormats.EAN_8,
     Html5QrcodeSupportedFormats.UPC_A,
     Html5QrcodeSupportedFormats.UPC_E,
-    Html5QrcodeSupportedFormats.CODABAR,
-    Html5QrcodeSupportedFormats.ITF,
-    Html5QrcodeSupportedFormats.QR_CODE
+    Html5QrcodeSupportedFormats.CODE_128,
+    Html5QrcodeSupportedFormats.CODE_39
 ] : undefined;
 
 startCameraBtn.addEventListener('click', iniciarCamara);
@@ -1147,14 +1244,33 @@ async function iniciarCamara() {
 
         html5QrCode = new Html5Qrcode('cameraView', {
             formatsToSupport: FORMATOS_CODIGO_BARRAS,
-            verbose: false
+            verbose: false,
+            // Si el navegador soporta la API nativa BarcodeDetector (Chrome/Edge
+            // en Android, mayoría de celulares modernos), la usa en vez del
+            // decoder en JS puro. Es sensiblemente más rápida y más precisa.
+            // Si no está disponible, cae solo al decoder JS de siempre.
+            experimentalFeatures: {
+                useBarCodeDetectorIfSupported: true
+            }
         });
 
         await html5QrCode.start(
             cameraId,
             {
                 fps: 10,
-                qrbox: { width: 280, height: 140 }
+                qrbox: { width: 280, height: 140 },
+                // disableFlip: un código de barras nunca hay que leerlo "espejado",
+                // así que evitamos que pruebe la imagen invertida en cada frame.
+                disableFlip: true,
+                // Pedimos foco continuo y una resolución razonable (no la máxima
+                // del celular, que puede hacer más lento el procesamiento por
+                // frame). Esto es lo que más ayuda contra el "tarda en enfocar".
+                videoConstraints: {
+                    facingMode: 'environment',
+                    focusMode: 'continuous',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
             },
             onScanSuccess,
             () => { /* fallo de lectura en un frame puntual: se ignora */ }
@@ -1584,7 +1700,7 @@ document.getElementById('downloadBtn').addEventListener('click', function () {
         return;
     }
 
-    descargarTxt(generarContenidoTxt(productosModificadosACanonico()), 'avance_parcial.txt');
+    descargarTxt(generarContenidoTxt(productosModificadosACanonico()), nombreArchivoInventario(inventarioActual, 'avance_parcial'));
     showToast(`Avance descargado: ${productosModificados.size} producto(s) modificado(s).`, 'success');
 });
 
@@ -1601,7 +1717,7 @@ function formatearFechaInput(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-// Atajos "Hoy / Últimos 7 días / Últimos 30 días" en la sección Más: cargan
+// Atajos "Hoy / Últimos 7 días / Últimos 30 días" en la sección Historial: cargan
 // las fechas y disparan la búsqueda en un solo toque.
 function aplicarRangoHistorial(diasAtras) {
     const hasta = new Date();
@@ -1638,7 +1754,7 @@ async function buscarHistorial() {
     const hastaVal = document.getElementById('histHasta').value;
 
     // Evita relanzar la misma consulta a Firestore si ya se hizo (p. ej. al
-    // volver a entrar a "Más" con el mismo rango ya buscado).
+    // volver a entrar a "Historial" con el mismo rango ya buscado).
     const claveRango = `${desdeVal}|${hastaVal}`;
     if (claveRango === historialUltimoRango) return;
 
@@ -1711,7 +1827,7 @@ function renderHistorial(resultados) {
 
         const wrapper = document.createElement('div');
         wrapper.className = 'historial-item';
-        wrapper.dataset.index = index;
+        wrapper.dataset.id = inv.id;
         // Entrada escalonada, limitada a las primeras tarjetas para que un
         // historial largo no tarde una eternidad en terminar de aparecer.
         wrapper.style.animationDelay = `${Math.min(index, 8) * 40}ms`;
@@ -1727,15 +1843,16 @@ function renderHistorial(resultados) {
                 </div>
                 <svg class="historial-item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
             </div>
-            <div class="historial-item-productos" id="historialProductos${index}"></div>
+            <div class="historial-item-productos" id="historialProductos-${inv.id}"></div>
             <div class="historial-item-acciones">
-                <button type="button" class="btn btn--ghost btn--sm btn--full hist-descargar">Descargar .txt</button>
+                <button type="button" class="btn btn--ghost btn--sm btn--full hist-descargar">Descargar archivo</button>
+                <button type="button" class="btn btn--danger btn--sm btn--full hist-eliminar">Eliminar</button>
             </div>
         `;
 
         wrapper.querySelector('.historial-item-header').addEventListener('click', function () {
             const abierta = wrapper.classList.toggle('is-open');
-            if (abierta) renderProductosHistorial(index);
+            if (abierta) renderProductosHistorial(inv);
         });
 
         wrapper.querySelector('.hist-descargar').addEventListener('click', function (e) {
@@ -1748,7 +1865,41 @@ function renderHistorial(resultados) {
                 unidades: it.unidades,
                 stock: it.stock
             }));
-            descargarTxt(generarContenidoTxt(itemsCanonicos), `inventario_${inv.id}.txt`);
+            descargarTxt(generarContenidoTxt(itemsCanonicos), nombreArchivoInventario(inv, 'inventario'));
+        });
+
+        wrapper.querySelector('.hist-eliminar').addEventListener('click', async function (e) {
+            e.stopPropagation();
+            const confirmado = await mostrarConfirm({
+                titulo: 'Eliminar conteo',
+                mensaje: `Se va a eliminar "${inv.nombre}" del historial de forma permanente. No se puede deshacer. ¿Confirmás?`,
+                textoConfirmar: 'Eliminar'
+            });
+            if (!confirmado) return;
+
+            const ok = await eliminarInventario(inv.id);
+            if (!ok) {
+                showToast('No se pudo eliminar el conteo.', 'error');
+                return;
+            }
+
+            // Sacamos SOLO esta tarjeta del DOM y del array en memoria — nada
+            // de volver a pedir el historial a Firestore ni de reconstruir
+            // las demás tarjetas, que ya están armadas y no cambiaron.
+            wrapper.remove();
+            historialResultados = historialResultados.filter(r => r.id !== inv.id);
+
+            const resumen = document.getElementById('historialResumen');
+            const vacio = document.getElementById('historialVacio');
+            if (historialResultados.length === 0) {
+                resumen.style.display = 'none';
+                vacio.textContent = 'No hay conteos finalizados en ese rango de fechas.';
+                vacio.style.display = '';
+            } else {
+                resumen.textContent = `${historialResultados.length} conteo${historialResultados.length === 1 ? '' : 's'} encontrado${historialResultados.length === 1 ? '' : 's'}`;
+            }
+
+            showToast(`"${inv.nombre}" eliminado del historial.`, 'success');
         });
 
         frag.appendChild(wrapper);
@@ -1758,12 +1909,13 @@ function renderHistorial(resultados) {
 }
 
 // Arma la tabla de productos de un conteo recién al abrirlo, y la deja
-// marcada para no reconstruirla si se cierra y se vuelve a abrir.
-function renderProductosHistorial(index) {
-    const cont = document.getElementById(`historialProductos${index}`);
+// marcada para no reconstruirla si se cierra y se vuelve a abrir. Recibe el
+// objeto inv directo (no un índice) para no depender de la posición del
+// conteo dentro de historialResultados, que puede cambiar si se borra algo.
+function renderProductosHistorial(inv) {
+    const cont = document.getElementById(`historialProductos-${inv.id}`);
     if (!cont || cont.dataset.armado === '1') return;
 
-    const inv = historialResultados[index];
     const items = Object.values(inv.items || {});
 
     const filas = items.map(it => `
