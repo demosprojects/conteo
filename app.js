@@ -1877,7 +1877,7 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
 })();
 
 // -------------------------------
-// PWA: aviso "Instalar app" (sección Más)
+// PWA: aviso "Instalar app" (banner arriba de la pestaña Escanear)
 // -------------------------------
 (function () {
     const CLAVE_DESCARTADO = 'conteoplus_install_dismissed';
@@ -1888,11 +1888,16 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
     if (!installCard) return;
 
     let deferredPrompt = null;
+    let banerMostrado = false; // solo marcamos "descartado para siempre" si el aviso llegó a mostrarse de verdad
 
     const esStandalone = window.matchMedia('(display-mode: standalone)').matches
         || window.navigator.standalone === true; // Safari iOS
 
-    const esIOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent) && !window.MSStream;
+    // iPadOS desde iOS 13 manda un User-Agent de escritorio ("Macintosh") por
+    // default, así que "iPad" ya no aparece ahí. Lo detectamos también por
+    // multitouch (una Mac de verdad no tiene más de 1 punto de touch).
+    const esIOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent)
+        || (/macintosh/i.test(window.navigator.userAgent) && navigator.maxTouchPoints > 1);
 
     function estaDescartado() {
         try { return localStorage.getItem(CLAVE_DESCARTADO) === '1'; } catch (e) { return false; }
@@ -1902,10 +1907,26 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
         try { localStorage.setItem(CLAVE_DESCARTADO, '1'); } catch (e) { /* localStorage no disponible, no pasa nada */ }
     }
 
+    function mostrarBanner() {
+        banerMostrado = true;
+        installCard.style.display = '';
+    }
+
+    function ocultarBanner() {
+        installCard.style.display = 'none';
+    }
+
+    // Atajo de testing: entrar con ?resetInstall=1 en la URL borra el
+    // "ya lo cerré" guardado en este dispositivo, para poder volver a ver
+    // el aviso sin tener que borrar los datos del sitio a mano.
+    if (new URLSearchParams(location.search).get('resetInstall') === '1') {
+        try { localStorage.removeItem(CLAVE_DESCARTADO); } catch (e) { /* localStorage no disponible, no pasa nada */ }
+    }
+
     if (installCloseBtn) {
         installCloseBtn.addEventListener('click', function () {
             marcarDescartado();
-            installCard.style.display = 'none';
+            ocultarBanner();
         });
     }
 
@@ -1918,7 +1939,7 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
         // instalar con un solo toque, así que mostramos el paso manual.
         if (installMsg) installMsg.textContent = 'Tocá el ícono de compartir de Safari (⬆) y elegí "Agregar a inicio" para instalarla.';
         if (installBtn) installBtn.style.display = 'none';
-        installCard.style.display = '';
+        mostrarBanner();
         return;
     }
 
@@ -1927,7 +1948,7 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
     window.addEventListener('beforeinstallprompt', function (e) {
         e.preventDefault();
         deferredPrompt = e;
-        installCard.style.display = '';
+        mostrarBanner();
     });
 
     if (installBtn) {
@@ -1939,7 +1960,7 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
                 const { outcome } = await deferredPrompt.userChoice;
                 if (outcome === 'accepted') {
                     showToast('¡Listo! Conteo+ se está instalando.', 'success');
-                    installCard.style.display = 'none';
+                    ocultarBanner();
                 }
             } finally {
                 deferredPrompt = null;
@@ -1948,9 +1969,13 @@ document.getElementById('borrarTodoBtn').addEventListener('click', async functio
         });
     }
 
+    // Si el navegador confirma que se instaló, ocultamos y no volvemos a
+    // insistir — pero solo contamos esto como "descartado" si el aviso
+    // llegó a estar visible en esta sesión, para no marcar la cuenta como
+    // "ya lo cerró" por un evento que no tuvo que ver con nuestro banner.
     window.addEventListener('appinstalled', function () {
-        installCard.style.display = 'none';
-        marcarDescartado();
+        ocultarBanner();
+        if (banerMostrado) marcarDescartado();
     });
 })();
 
