@@ -66,6 +66,62 @@ export async function loginUsuario(email, password) {
     return cred.user;
 }
 
+// -------------------------------------------------------
+// Login por nombre de usuario (en vez de email)
+// -------------------------------------------------------
+// Firebase Auth solo entiende "email + contraseña": no tiene login nativo
+// por nombre de usuario. Para no perder esa parte (Auth, sesiones,
+// seguridad de contraseñas, todo eso), mantenemos el email por dentro, pero
+// de cara a la persona que usa la app el login es con un "usuario" corto
+// (ej. "kiosco_pepito"), no con el email.
+//
+// Esto funciona con una colección extra en Firestore, "usernames": un
+// documento por cuenta, con ID = nombre de usuario (normalizado) y un campo
+// "email" con el email real de esa cuenta en Firebase Auth. Se crea a mano
+// desde la consola de Firebase, en el mismo momento en que se crea la
+// cuenta en Authentication (mismo proceso manual que ya existía para las
+// cuentas).
+//
+// IMPORTANTE — hace falta esta regla en Firestore (Firestore Database >
+// Reglas) para que este lookup funcione ANTES de loguearse (todavía no hay
+// sesión, o sea auth == null en ese momento):
+//
+//   match /usernames/{usuario} {
+//     allow get: if true;
+//     allow write: if false;
+//   }
+//
+// "get" (leer UN documento puntual sabiendo su ID exacto) es distinto de
+// "list" (listar/buscar toda la colección): esta regla permite lo primero
+// pero no lo segundo, así que no se puede enumerar la lista completa de
+// usuarios ni de emails desde afuera, solo resolver "este usuario existe,
+// este es su email" si ya se sabe el nombre de usuario exacto.
+function normalizarUsuario(usuario) {
+    return String(usuario ?? "").trim().toLowerCase();
+}
+
+export async function loginConUsuario(usuario, password) {
+    const ref = doc(db, "usernames", normalizarUsuario(usuario));
+    const snap = await getDoc(ref);
+    if (!snap.exists() || !snap.data().email) {
+        // Mismo "shape" de error que Firebase Auth para un login inválido,
+        // así el catch de app.js no necesita distinguir casos.
+        throw { code: "auth/invalid-credential" };
+    }
+    return loginUsuario(snap.data().email, password);
+}
+
+// Nombre para mostrar en la app (ej. "Kiosco Pepito") en vez del email. Se
+// carga a mano en Firestore, en usuarios/{uid} → campo "nombre" (el
+// documento ya existe por asegurarUsuarioDoc; solo hay que agregarle ese
+// campo desde la consola). Si no está cargado, quien llama debe mostrar el
+// email como respaldo.
+export async function obtenerNombreUsuario(uid) {
+    const ref = doc(db, "usuarios", uid);
+    const snap = await getDoc(ref);
+    return snap.exists() ? (snap.data().nombre || null) : null;
+}
+
 export function logoutUsuario() {
     return signOut(auth);
 }
