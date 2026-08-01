@@ -126,14 +126,19 @@
         </div>
         <div class="topbar-right">
             <div class="status-badge" id="dbStatus">Sin productos · 0 productos</div>
-            <div class="user-chip" id="userChip" style="display:none;">
-                <span class="user-chip__avatar" id="userChipAvatar" aria-hidden="true"></span>
-                <span class="user-chip__text">
-                    <span class="user-chip__greeting" id="userChipGreeting"></span>
-                    <span class="user-chip__name" id="userChipName"></span>
-                </span>
+            <span class="topbar-divider" aria-hidden="true"></span>
+            <div class="topbar-actions">
+                <div class="user-chip" id="userChip" style="display:none;">
+                    <span class="user-chip__avatar" id="userChipAvatar" aria-hidden="true"></span>
+                    <span class="user-chip__text">
+                        <span class="user-chip__greeting" id="userChipGreeting"></span>
+                        <span class="user-chip__name" id="userChipName"></span>
+                    </span>
+                </div>
+                <button class="icon-btn icon-btn--logout" id="logoutBtn" type="button" aria-label="Cerrar sesión" title="Cerrar sesión">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </button>
             </div>
-            <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button">Salir</button>
         </div>
     </header>
 
@@ -160,7 +165,7 @@
             <div class="card">
                 <span class="card__step">Escanear</span>
                 <h2>Código de barras</h2>
-                <p class="hint">Usá la cámara del dispositivo o cargá el código a mano si no se puede leer. Para cargar un nuevo producto en la pestaña de Por nombre escribí el nombre y lo generas.</p>
+                <p class="hint">Usá la cámara del dispositivo o cargá el código a mano si no se puede leer. Para cargar un nuevo producto en la pestaña de Por nombre escribí el nombre y lo generas. No olvides abrir el dia.</p>
 
                 <div class="tabs">
                     <div class="tab is-active" id="tabCamera" data-tab="camera">Cámara</div>
@@ -256,11 +261,12 @@
                 <div>
                     <div class="inv-name" id="invName">—</div>
                     <div class="inv-state" id="invState">—</div>
-                    <div class="inv-hint">Los cambios se guardan y sincronizan solos en tiempo real.</div>
+                    <div class="inv-hint"></div>
                 </div>
                 <div class="inventory-actions">
                     <span class="sync-badge is-synced" id="syncBadge">Sincronizado</span>
-                    <button class="btn btn--amber btn--sm" id="nuevoInventarioBtn" type="button" disabled>Finalizar</button>
+                    <button class="btn btn--ghost btn--sm" id="abrirDiaBtn" type="button" disabled style="display:none;">Abrir día</button>
+                    <button class="btn btn--amber btn--sm" id="nuevoInventarioBtn" type="button" disabled>Cerrar día</button>
                 </div>
             </div>
 
@@ -288,12 +294,14 @@
             <div class="card card--export">
                 <span class="card__step">Avance (opcional)</span>
                 <h2>Descargar avance parcial</h2>
-                <p class="hint">Usá esto solo si necesitás bajar un adelanto a mitad de conteo. Sincroniza los cambios y toca en el botón de "Descargar avance parcial".</p>
+                <p class="hint">Usá esto solo si necesitás bajar un adelanto a mitad de conteo. El archivo va a contener lo que llevas escaneado hasta ahora.</p>
                 <button id="downloadBtn" class="btn btn--ghost btn--full" disabled>Descargar avance parcial</button>
             </div>
         </section>
 
-        <!-- Página: Más (historial y ajustes) -->
+        <!-- Página: Historial (antes "Más"; internamente sigue usando el
+             data-page="mas" / id="pageMas" para no tocar toda la lógica de
+             navegación por un simple cambio de nombre visible) -->
         <section class="page" id="pageMas" data-page="mas">
 
             <div class="card" id="historialCard">
@@ -345,18 +353,18 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
             <span>Escanear</span>
         </button>
-        <button class="nav-btn" data-page="productos" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
-            <span>Productos</span>
-        </button>
         <button class="nav-btn" data-page="conteo" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
             <span>Conteo</span>
             <span class="nav-badge" id="navConteoBadge" style="display:none;">0</span>
         </button>
+        <button class="nav-btn" data-page="productos" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
+            <span>Productos</span>
+        </button>
         <button class="nav-btn" data-page="mas" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
-            <span>Más</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+            <span>Historial</span>
         </button>
     </nav>
 </div>
