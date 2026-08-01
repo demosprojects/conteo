@@ -58,10 +58,10 @@
 
         <form id="loginForm">
             <div class="field-group">
-                <label class="field-label" for="loginEmail">Email</label>
+                <label class="field-label" for="loginUsuario">Usuario</label>
                 <div class="input-with-icon">
-                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></svg>
-                    <input type="email" id="loginEmail" class="manual-input has-icon" required autocomplete="username" autocapitalize="none" autofocus placeholder="tu@email.com">
+                    <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+                    <input type="text" id="loginUsuario" class="manual-input has-icon" required autocomplete="username" autocapitalize="none" autofocus placeholder="tu usuario">
                 </div>
             </div>
             <div class="field-group">
@@ -117,7 +117,13 @@
         </div>
         <div class="topbar-right">
             <div class="status-badge" id="dbStatus">Sin productos · 0 productos</div>
-            <span class="user-chip" id="userChip"></span>
+            <div class="user-chip" id="userChip" style="display:none;">
+                <span class="user-chip__avatar" id="userChipAvatar" aria-hidden="true"></span>
+                <span class="user-chip__text">
+                    <span class="user-chip__greeting" id="userChipGreeting"></span>
+                    <span class="user-chip__name" id="userChipName"></span>
+                </span>
+            </div>
             <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button">Salir</button>
         </div>
     </header>
@@ -160,14 +166,26 @@
 
                 <!-- Panel manual (código) -->
                 <div class="tab-panel" id="panelManual" style="display:none;">
-                    <input type="text" id="scannerInput" placeholder="Ingresá o pegá el código y presioná Enter…"
-                        class="manual-input" inputmode="numeric" pattern="[0-9]*" disabled>
+                    <div class="input-with-action">
+                        <input type="text" id="scannerInput" placeholder="Ingresá o pegá el código"
+                            class="manual-input" inputmode="numeric" pattern="[0-9]*" disabled>
+                        <button type="button" class="input-action-btn" id="scannerEnterBtn" disabled aria-label="Confirmar código" title="Siguiente">
+                            <span class="btn-text">Siguiente</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Panel búsqueda por nombre (para productos sin código de barra) -->
                 <div class="tab-panel" id="panelBuscar" style="display:none;">
-                    <input type="text" id="buscarArticuloInput" placeholder="Escribí parte del nombre del producto…"
-                        class="manual-input" disabled autocomplete="off">
+                    <div class="input-with-action">
+                        <input type="text" id="buscarArticuloInput" placeholder="Escribí el nombre del producto"
+                            class="manual-input" disabled autocomplete="off">
+                        <button type="button" class="input-action-btn" id="buscarEnterBtn" disabled aria-label="Confirmar búsqueda" title="Siguiente">
+                            <span class="btn-text">Siguiente</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+                        </button>
+                    </div>
                     <div class="buscar-resultados" id="buscarResultados"></div>
                 </div>
             </div>
@@ -182,7 +200,6 @@
 
                 <div class="catalog-status" id="catalogStatus" style="display:none;">
                     <span><strong id="catalogCount">0</strong> productos cargados en tu cuenta</span>
-                    <button type="button" class="link-btn" id="sincronizarCatalogoBtn">Sincronizar</button>
                 </div>
 
                 <div id="catalogUploadPanel">
@@ -214,11 +231,10 @@
                 <div>
                     <div class="inv-name" id="invName">—</div>
                     <div class="inv-state" id="invState">—</div>
-                    <div class="inv-hint">Primero tocá "Sincronizar" para traer los últimos cambios; recién ahí se habilita la descarga del archivo final.</div>
+                    <div class="inv-hint">Los cambios se guardan y sincronizan solos en tiempo real.</div>
                 </div>
                 <div class="inventory-actions">
-                    <span class="sync-badge" id="syncBadge">Sin sincronizar</span>
-                    <button class="btn btn--ghost btn--sm" id="sincronizarConteoBtn" type="button">Sincronizar</button>
+                    <span class="sync-badge is-synced" id="syncBadge">Sincronizado</span>
                     <button class="btn btn--amber btn--sm" id="nuevoInventarioBtn" type="button" disabled>Finalizar</button>
                 </div>
             </div>
@@ -254,10 +270,34 @@
 
         <!-- Página: Más (historial y ajustes) -->
         <section class="page" id="pageMas" data-page="mas">
+
+            <!-- Aviso de instalación de la app (PWA) -->
+            <div class="card card--install" id="installCard" style="display:none;">
+                <button type="button" class="install-close" id="installCloseBtn" aria-label="Cerrar aviso">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+                <div class="install-card__body">
+                    <div class="install-card__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+                    </div>
+                    <div class="install-card__text">
+                        <h3>Instalá Conteo+</h3>
+                        <p id="installCardMsg">Agregala a la pantalla de inicio para abrirla como una app: entra más rápido y sin la barra del navegador.</p>
+                    </div>
+                </div>
+                <button type="button" class="btn btn--amber btn--full" id="installBtn">Instalar app</button>
+            </div>
+
             <div class="card" id="historialCard">
                 <span class="card__step">Historial</span>
                 <h2>Conteos anteriores</h2>
                 <p class="hint">Buscá por fecha los conteos ya finalizados y volvé a descargar o revisar los productos de cualquiera.</p>
+
+                <div class="historial-chips" id="historialChips">
+                    <button type="button" class="chip" data-rango="0">Hoy</button>
+                    <button type="button" class="chip" data-rango="7">Últimos 7 días</button>
+                    <button type="button" class="chip" data-rango="30">Últimos 30 días</button>
+                </div>
 
                 <div class="historial-filtros">
                     <div class="field-group">
@@ -271,8 +311,10 @@
                 </div>
                 <button class="btn btn--ghost btn--full" id="histBuscarBtn" type="button">Buscar conteos</button>
 
+                <div class="historial-resumen" id="historialResumen" style="display:none;"></div>
+
                 <div class="historial-lista" id="historialLista">
-                    <p class="hint" id="historialVacio">Elegí un rango de fechas y tocá "Buscar conteos".</p>
+                    <p class="hint" id="historialVacio">Elegí un rango de fechas o tocá un atajo arriba.</p>
                 </div>
             </div>
 
