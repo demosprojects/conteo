@@ -26,6 +26,17 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
+/* Con un modal abierto, el fondo queda fijo: el único scroll posible es el
+   interno del propio .modal (arriba). Evita que en mobile el dedo "arrastre"
+   la página de atrás mientras el modal tapa la pantalla. */
+body.modal-open {
+    position: fixed;
+    left: 0;
+    right: 0;
+    width: 100%;
+    overflow: hidden;
+}
+
 .app {
     max-width: 1080px;
     margin: 0 auto;
@@ -132,6 +143,7 @@ body {
 .file-btn {
     display: block;
     width: 100%;
+    margin-bottom: 20px;
     font-family: 'Inter', sans-serif;
     font-size: 13.5px;
     color: var(--ink-soft);
@@ -282,6 +294,12 @@ body {
 
 .manual-input:disabled { opacity: .5; cursor: not-allowed; }
 
+.manual-input::placeholder {
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    opacity: .8;
+}
+
 /* Buttons */
 .btn {
     font-family: 'Space Grotesk', sans-serif;
@@ -413,6 +431,7 @@ body {
     align-items: center;
     justify-content: center;
     padding: 20px;
+    overflow-y: auto;
     z-index: 400;
 }
 
@@ -424,6 +443,10 @@ body {
     padding: 26px;
     max-width: 380px;
     width: 100%;
+    max-height: calc(100vh - 40px);
+    max-height: calc(100dvh - 40px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     box-shadow: 0 24px 60px rgba(0, 0, 0, .3);
 }
 
@@ -484,7 +507,27 @@ body {
 
 .qty-input:focus { outline: none; border-color: var(--amber); }
 
-.modal-actions { display: flex; gap: 10px; }
+.modal-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* Con .btn--full ambos botones pedían 100% de ancho cada uno; en modales
+   angostos ("Agregar producto") el texto no entraba y el botón terminaba
+   ocupando dos renglones. Acá reparten el ancho disponible en partes
+   iguales y, si igual no entra en pantallas muy chicas, se corta con "…"
+   en vez de partirse en dos líneas. */
+.modal-actions .btn {
+    flex: 1 1 0%;
+    width: auto;
+    min-width: 0;
+    padding: 13px 10px;
+    font-size: 13.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+}
 
 /* Modal de confirmación (reemplaza confirm()/prompt() nativos) */
 .modal--confirm .confirm-message {
@@ -703,9 +746,57 @@ body {
 }
 
 .user-chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 16px 6px 6px;
+    background: var(--paper-raised);
+    border: 1.5px solid var(--ink);
+    border-radius: 999px;
+    box-shadow: 3px 3px 0 var(--ink);
+}
+
+.user-chip__avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--amber);
+    color: var(--ink);
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+}
+
+.user-chip__text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+}
+
+.user-chip__greeting {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12.5px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
     color: var(--ink-soft);
+}
+
+.user-chip__name {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 14.5px;
+    font-weight: 700;
+    color: var(--ink);
+}
+
+@media (max-width: 480px) {
+    .user-chip { padding: 5px 14px 5px 5px; gap: 8px; }
+    .user-chip__avatar { width: 30px; height: 30px; font-size: 13.5px; }
+    .user-chip__greeting { font-size: 10px; }
+    .user-chip__name { font-size: 13.5px; }
 }
 
 .btn--sm { padding: 8px 14px; font-size: 13px; }
@@ -812,7 +903,6 @@ body {
 .catalog-status {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 10px;
     background: var(--success-soft);
     border: 1px solid #bfe3c8;
@@ -841,6 +931,36 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #a3ab97; }
 
 /* Historial de conteos (.txt) */
+
+/* Atajos de fecha rápida */
+.historial-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.chip {
+    font-family: 'Inter', sans-serif;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+}
+
+.chip:hover { border-color: var(--amber); color: var(--ink); }
+
+.chip.is-active {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: #fff;
+}
+
 .historial-filtros {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -863,8 +983,19 @@ body {
     }
 }
 
+/* Contador de resultados ("3 conteos encontrados") */
+.historial-resumen {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-top: 18px;
+}
+
 .historial-lista {
-    margin-top: 16px;
+    margin-top: 10px;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -872,17 +1003,18 @@ body {
 
 .historial-item {
     border: 1px solid var(--line);
-    border-radius: 10px;
+    border-radius: 12px;
     overflow: hidden;
     opacity: 0;
-    animation: historialItemIn .4s cubic-bezier(.2, .7, .3, 1) forwards;
+    background: var(--paper-raised);
+    animation: historialItemIn .35s cubic-bezier(.2, .7, .3, 1) forwards;
 }
 
 /* forwards deja la tarjeta en su estado final (opacity:1, sin desplazar)
    una vez terminada la animación, así que "quedan ahí" en vez de volver a
    su estado inicial invisible. */
 @keyframes historialItemIn {
-    from { opacity: 0; transform: translateY(10px); }
+    from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
@@ -893,20 +1025,39 @@ body {
 .historial-item-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 12px 14px;
+    gap: 12px;
+    padding: 13px 14px;
     cursor: pointer;
-    background: var(--paper);
+    background: var(--paper-raised);
+    transition: background .15s;
 }
 
 .historial-item-header:hover { background: var(--amber-soft); }
+
+.historial-item-icon {
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.historial-item-icon svg { width: 17px; height: 17px; }
+
+.historial-item-info { flex: 1; min-width: 0; }
 
 .historial-item-nombre {
     font-family: 'Space Grotesk', sans-serif;
     font-weight: 600;
     font-size: 13.5px;
     color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .historial-item-meta {
@@ -916,11 +1067,15 @@ body {
     margin-top: 2px;
 }
 
-.historial-item-acciones {
-    display: flex;
-    gap: 8px;
+.historial-item-chevron {
     flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    color: var(--ink-soft);
+    transition: transform .2s ease;
 }
+
+.historial-item.is-open .historial-item-chevron { transform: rotate(180deg); }
 
 .historial-item-productos {
     display: none;
@@ -959,6 +1114,76 @@ body {
     color: var(--amber-dark);
 }
 
+.historial-item-acciones {
+    display: none;
+    padding: 10px 14px 14px;
+}
+
+.historial-item.is-open .historial-item-acciones { display: block; }
+
+/* Aviso de instalación de la app (PWA) */
+.card--install {
+    position: relative;
+    background: linear-gradient(155deg, var(--paper-raised) 55%, var(--amber-soft) 130%);
+}
+
+.install-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: none;
+    color: var(--ink-soft);
+    cursor: pointer;
+    border-radius: 50%;
+    transition: background .15s, color .15s;
+}
+
+.install-close:hover { background: var(--line); color: var(--ink); }
+.install-close svg { width: 15px; height: 15px; }
+
+.install-card__body {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 16px;
+    padding-right: 20px;
+}
+
+.install-card__icon {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: var(--amber);
+    color: #201400;
+}
+
+.install-card__icon svg { width: 22px; height: 22px; }
+
+.install-card__text h3 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 15.5px;
+    font-weight: 600;
+    color: var(--ink);
+    margin: 3px 0 4px;
+}
+
+.install-card__text p {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin: 0;
+}
+
 /* Zona de peligro (testing) */
 .card--danger {
     border-color: var(--danger);
@@ -971,6 +1196,64 @@ body {
 .btn--danger:hover { background: #b52a2e; }
 
 /* Búsqueda manual por nombre de artículo */
+.input-with-action {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.input-with-action .manual-input {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Botón "Enter" para mobile: el teclado numérico de los celulares casi nunca
+   tiene tecla Enter, así que este botón dispara exactamente lo mismo. */
+.input-action-btn {
+    flex-shrink: 0;
+    width: 52px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--ink);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: background .15s, opacity .15s, transform .1s;
+}
+
+.input-action-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+.input-action-btn:hover:not(:disabled) { background: #000; }
+.input-action-btn:active:not(:disabled) { transform: scale(.94); }
+
+.input-action-btn:disabled {
+    background: var(--line);
+    color: var(--ink-soft);
+    cursor: not-allowed;
+}
+
+/* En mobile el botón es solo el ícono (poco espacio, y ya está claro por el
+   contexto). En pantallas más grandes, donde no hay ambigüedad de espacio,
+   mostramos también el texto para que se note que es un botón de acción
+   ("siguiente") y no un simple ícono decorativo. */
+.input-action-btn .btn-text {
+    display: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+@media (min-width: 640px) {
+    .input-action-btn {
+        width: auto;
+        padding: 0 16px;
+    }
+    .input-action-btn .btn-text { display: inline; }
+}
+
 .buscar-resultados {
     margin-top: 10px;
     max-height: 280px;
