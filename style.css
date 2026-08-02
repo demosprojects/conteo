@@ -419,6 +419,28 @@ body.modal-open {
 
 .empty-row { text-align: center; padding: 24px; color: #a8afb6; font-style: italic; font-size: 13.5px; }
 
+/* Fila "Mostrar todos" del catálogo de Productos: texto arriba, botón centrado
+   abajo, con separación clara entre ambos (en vez de quedar todo apretado en
+   una sola línea de texto con el botón metido en el medio). */
+.show-more-row td { padding: 22px 14px; }
+.show-more-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-align: center;
+}
+.show-more-text {
+    margin: 0;
+    color: #a8afb6;
+    font-style: italic;
+    font-size: 13.5px;
+}
+.show-more-inner .btn {
+    padding: 9px 20px;
+    font-size: 13.5px;
+}
+
 /* Toasts */
 .toast-container {
     position: fixed;
