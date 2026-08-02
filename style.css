@@ -143,6 +143,10 @@ body.modal-open {
     box-shadow: 0 1px 2px rgba(18, 22, 28, .04);
 }
 
+@media (max-width: 480px) {
+    .card { padding: 20px 16px; }
+}
+
 .card__step {
     display: inline-block;
     font-family: 'JetBrains Mono', monospace;
@@ -832,9 +836,8 @@ body.modal-open {
     flex-wrap: wrap;
 }
 
-/* Agrupa chip de usuario + botón de salir como un solo bloque, para que al
-   envolver en mobile el status-badge quede a la izquierda y este grupo a la
-   derecha, en vez de que los tres elementos se acomoden sueltos y sin orden. */
+/* Agrupa chip de usuario + botón de salir como un solo bloque, para que se
+   comporten como una unidad al centrar/envolver junto al status-badge. */
 .topbar-actions {
     display: flex;
     align-items: center;
@@ -842,8 +845,7 @@ body.modal-open {
 }
 
 @media (max-width: 700px) {
-    .topbar-right { flex-basis: 100%; justify-content: space-between; }
-    .topbar-divider { display: none; }
+    .topbar-right { flex-basis: 100%; justify-content: center; }
 }
 
 .user-chip {
@@ -1099,6 +1101,11 @@ body.modal-open {
     padding: 7px 14px;
     cursor: pointer;
     transition: background .15s, border-color .15s, color .15s;
+}
+
+@media (max-width: 480px) {
+    .historial-chips { gap: 6px; }
+    .chip { padding: 6px 10px; font-size: 12px; }
 }
 
 .chip:hover { border-color: var(--amber); color: var(--ink); }
