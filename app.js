@@ -340,6 +340,7 @@ onAuthChange(async function (user) {
     if (user) {
         loginScreen.classList.add('is-hidden');
         appRoot.classList.remove('is-hidden');
+        mostrarGuiaSiEsLaPrimeraVez();
 
         // No mostramos el email: el chip queda oculto hasta que resuelva el
         // nombre en Firestore para evitar el parpadeo "correo -> usuario".
@@ -808,6 +809,104 @@ async function eliminarModificacion(codigo, fila) {
         console.error(err);
         showToast('Hubo un problema al sincronizar la reversión.', 'error');
     }
+}
+
+// -------------------------------
+// Guía de uso: tutorial paso a paso. Se abre desde el botón (?) del header,
+// y también sola la primera vez que alguien entra a la cuenta en este
+// navegador (se guarda en localStorage para no repetirla).
+// -------------------------------
+const PASOS_GUIA = [
+    {
+        titulo: 'Cargar el catálogo inicial',
+        texto: 'La primera vez, ingresá a Productos y cargá el archivo .txt exportado desde tu sistema POS. Este paso solo se realiza una vez; luego el catálogo queda guardado en la cuenta.',
+        icono: '<path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>'
+    },
+    {
+        titulo: 'Abrir el día',
+        texto: 'Antes de comenzar el conteo, presioná "Abrir día". Mientras el día esté abierto, el sistema permitirá escanear y modificar el stock.',
+        icono: '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'
+    },
+    {
+        titulo: 'Escanear productos',
+        texto: 'Podés registrar productos de tres maneras: con la cámara, ingresando el código de barras manualmente, o buscando el producto por nombre (ideal para artículos sin código).',
+        icono: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/>'
+    },
+    {
+        titulo: 'Corregir errores',
+        texto: 'Si te equivocás al escanear, desde la sección Conteo podés editar el stock o revertir la modificación realizada.',
+        icono: '<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>'
+    },
+    {
+        titulo: 'Cerrar el día',
+        texto: 'Al finalizar el conteo, presioná "Cerrar día". El sistema guardará el inventario y va a poder generar el archivo .txt con las modificaciones para importar nuevamente al sistema POS.',
+        icono: '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
+    },
+    {
+        titulo: '¿Necesitás repasarla de nuevo?',
+        texto: 'En cualquier momento podés volver a ver esta guía tocando el botón (?) que está arriba, al lado de tu perfil.',
+        icono: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="17" x2="12.01" y2="17"/>'
+    }
+];
+
+const CLAVE_GUIA_VISTA = 'conteoplus_guia_vista';
+const guiaModal = document.getElementById('guiaModal');
+let guiaPasoActual = 0;
+
+function renderGuia() {
+    const paso = PASOS_GUIA[guiaPasoActual];
+
+    document.getElementById('guiaContador').textContent = `Paso ${guiaPasoActual + 1} de ${PASOS_GUIA.length}`;
+    document.getElementById('guiaIcono').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paso.icono}</svg>`;
+    document.getElementById('guiaTitulo').textContent = paso.titulo;
+    document.getElementById('guiaTexto').textContent = paso.texto;
+
+    const dotsCont = document.getElementById('guiaDots');
+    dotsCont.innerHTML = PASOS_GUIA.map((_, i) => `<span class="guia-dot${i === guiaPasoActual ? ' is-active' : ''}"></span>`).join('');
+
+    const anteriorBtn = document.getElementById('guiaAnterior');
+    anteriorBtn.textContent = guiaPasoActual === 0 ? 'Omitir' : 'Anterior';
+
+    document.getElementById('guiaSiguiente').textContent = guiaPasoActual === PASOS_GUIA.length - 1 ? 'Entendido' : 'Siguiente';
+}
+
+function abrirGuia() {
+    guiaPasoActual = 0;
+    renderGuia();
+    guiaModal.classList.add('open');
+    try { localStorage.setItem(CLAVE_GUIA_VISTA, '1'); } catch (e) { /* localStorage no disponible, no pasa nada */ }
+}
+
+function cerrarGuia() {
+    guiaModal.classList.remove('open');
+}
+
+document.getElementById('guiaBtn').addEventListener('click', abrirGuia);
+document.getElementById('guiaCerrarX').addEventListener('click', cerrarGuia);
+guiaModal.addEventListener('click', (e) => { if (e.target === guiaModal) cerrarGuia(); });
+
+document.getElementById('guiaAnterior').addEventListener('click', () => {
+    if (guiaPasoActual === 0) {
+        cerrarGuia();
+        return;
+    }
+    guiaPasoActual--;
+    renderGuia();
+});
+
+document.getElementById('guiaSiguiente').addEventListener('click', () => {
+    if (guiaPasoActual === PASOS_GUIA.length - 1) {
+        cerrarGuia();
+        return;
+    }
+    guiaPasoActual++;
+    renderGuia();
+});
+
+function mostrarGuiaSiEsLaPrimeraVez() {
+    let yaVista = false;
+    try { yaVista = localStorage.getItem(CLAVE_GUIA_VISTA) === '1'; } catch (e) { /* localStorage no disponible: asumimos que no la vio */ }
+    if (!yaVista) abrirGuia();
 }
 
 document.getElementById('nuevoInventarioBtn').addEventListener('click', async function () {
