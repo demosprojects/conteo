@@ -544,6 +544,39 @@ body.modal-open {
     margin: 0 0 14px;
 }
 
+.modal-code-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 14px;
+}
+.modal-code-row .modal-code { margin: 0; }
+
+.np-codigo-editar {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    border-radius: 7px;
+}
+.np-codigo-editar:hover { background: var(--amber-soft); color: var(--amber-dark); }
+.np-codigo-editar svg { width: 14px; height: 14px; }
+
+.np-codigo-edit-group { margin-top: -6px; }
+
+.np-codigo-edit-row {
+    display: flex;
+    gap: 8px;
+}
+.np-codigo-edit-row .manual-input { flex: 1; min-width: 0; }
+.np-codigo-edit-row .btn { flex-shrink: 0; white-space: nowrap; }
+
 .modal .stock-current {
     font-size: 13.5px;
     color: var(--ink-soft);
