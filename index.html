@@ -398,7 +398,19 @@
 <div class="modal-overlay" id="newProductModal">
     <div class="modal">
         <h3>Producto nuevo</h3>
-        <p class="modal-code">Código: <span id="npCodigo">—</span></p>
+        <div class="modal-code-row">
+            <p class="modal-code">Código: <span id="npCodigo">—</span></p>
+            <button type="button" class="np-codigo-editar" id="npCodigoEditarBtn" aria-label="Corregir código" title="Corregir código">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+            </button>
+        </div>
+        <div class="field-group np-codigo-edit-group" id="npCodigoEditGroup" style="display:none;">
+            <label class="field-label" for="npCodigoInput">Corregir código</label>
+            <div class="np-codigo-edit-row">
+                <input type="text" id="npCodigoInput" class="manual-input" inputmode="numeric" autocomplete="off" placeholder="Código correcto">
+                <button type="button" class="btn btn--amber btn--sm" id="npCodigoGuardar">Guardar</button>
+            </div>
+        </div>
 
         <div class="field-group">
             <label class="field-label" for="npDescripcion">Descripción</label>
