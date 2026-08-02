@@ -30,6 +30,11 @@ let currentUserNombre = null; // nombre para mostrar (ej. "Kiosco Pepito"); null
 let inventarioActual = null; // { id, nombre, estado, items }
 let unsubCatalogo = null;    // función para dejar de escuchar el catálogo (onSnapshot)
 let unsubInventario = null;  // función para dejar de escuchar el inventario actual (onSnapshot)
+let uidSesionInicializada = null; // uid para el que YA hay listeners de catálogo/inventario activos.
+// Evita volver a suscribirse (y pagar de nuevo la lectura completa del catálogo)
+// si onAuthChange llegara a dispararse más de una vez para la MISMA cuenta —
+// por ejemplo, por sincronización de sesión entre pestañas del mismo navegador.
+// Un login real a una cuenta distinta sí vuelve a inicializar, porque el uid cambia.
 
 // Solo los productos que se modificaron en el conteo actual (para exportar el .txt)
 const productosModificados = new Map();
@@ -342,6 +347,17 @@ onAuthChange(async function (user) {
         appRoot.classList.remove('is-hidden');
         mostrarGuiaSiEsLaPrimeraVez();
 
+        // Si ya tenemos los listeners de catálogo/inventario activos para esta
+        // MISMA cuenta, no hace falta hacer nada más: no hubo login nuevo, así
+        // que no hay que volver a pagar la lectura completa del catálogo ni
+        // recrear los listeners. Esto puede pasar si el navegador dispara
+        // onAuthStateChanged más de una vez para la misma sesión (ej. otra
+        // pestaña del mismo navegador sincronizando el estado de auth).
+        if (uidSesionInicializada === user.uid) {
+            return;
+        }
+        uidSesionInicializada = user.uid;
+
         // No mostramos el email: el chip queda oculto hasta que resuelva el
         // nombre en Firestore para evitar el parpadeo "correo -> usuario".
         // Si la cuenta nunca tuvo un "nombre" cargado, el chip se queda oculto
@@ -362,12 +378,21 @@ onAuthChange(async function (user) {
         appRoot.classList.add('is-hidden');
         loginScreen.classList.remove('is-hidden');
         currentUserNombre = null;
+        uidSesionInicializada = null;
         mostrarSaludoUsuario(null);
         resetEstadoApp();
     }
 });
 
 async function inicializarSesion(uid) {
+    // Defensa extra: si por algún motivo ya había listeners de una sesión
+    // anterior sin cerrar (ej. cambio de cuenta sin pasar por logout), los
+    // cortamos antes de abrir los nuevos. Sin esto, quedarían dos listeners
+    // escuchando el catálogo a la vez, duplicando lecturas para siempre (no
+    // solo una vez).
+    if (unsubCatalogo) { unsubCatalogo(); unsubCatalogo = null; }
+    if (unsubInventario) { unsubInventario(); unsubInventario = null; }
+
     let primeraFotoCatalogo = true;
 
     // Todavía no sabemos si esta cuenta tiene catálogo cargado o no (la
@@ -1214,6 +1239,80 @@ function renderResultadosBusqueda(productos, textoBuscado) {
 const productsSearchInput = document.getElementById('productsSearchInput');
 const productsTableBody = document.getElementById('productsTableBody');
 
+// Pequeño helper genérico de debounce: agrupa llamadas seguidas (ej. cada
+// tecla del buscador) y solo ejecuta la última, esperando `espera` ms de
+// silencio. Evita reconstruir la tabla completa (normalizar + ordenar +
+// redibujar 6000 filas) en CADA letra tipeada — solo una vez cuando la
+// persona hace una pausa al escribir.
+function debounce(fn, espera) {
+    let timeoutId = null;
+    return function (...args) {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn.apply(this, args), espera);
+    };
+}
+
+// Escapa HTML antes de insertarlo con innerHTML. Los nombres de producto
+// pueden venir de una edición manual (modal "producto nuevo") o de un .txt
+// importado, así que no son texto de confianza: sin esto, un nombre con
+// "<" o "&" podía romper el render de la tabla o (en el peor caso) inyectar
+// HTML/atributos.
+function escapeHtml(texto) {
+    return String(texto ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+// Cache del texto normalizado (sin acentos, en minúscula) de cada producto,
+// guardado en el propio objeto la primera vez que hace falta. Antes se
+// recalculaba con NFD + regex para los 6000 productos en CADA tecla del
+// buscador; ahora se calcula una sola vez por producto y se reutiliza. Como
+// escucharCatalogo() arma objetos NUEVOS en cada snapshot (ver
+// inicializarSesion), el cache se descarta solo cuando el catálogo cambia de
+// verdad — no hace falta invalidarlo a mano.
+function textoNormalizadoProducto(producto) {
+    if (producto.__norm === undefined) {
+        producto.__norm = normalizarTexto(producto.articulo) + ' ' + normalizarTexto(producto.codigoArt);
+    }
+    return producto.__norm;
+}
+
+// Cache del catálogo ya ordenado alfabéticamente. Ordenar con localeCompare
+// es caro (hace collation por idioma), así que en vez de reordenar los 6000
+// productos en cada tecla del buscador, se ordena una sola vez por cada
+// catálogo distinto (detectado comparando la referencia del array) y se
+// reutiliza para todas las búsquedas sobre ese mismo catálogo.
+let catalogoOrdenadoCache = null;
+let catalogoOrdenadoDesde = null;
+function catalogoOrdenado() {
+    if (catalogoOrdenadoDesde !== baseDeDatos) {
+        catalogoOrdenadoCache = [...baseDeDatos].sort((a, b) =>
+            String(a.articulo || '').localeCompare(String(b.articulo || ''), 'es'));
+        catalogoOrdenadoDesde = baseDeDatos;
+    }
+    return catalogoOrdenadoCache;
+}
+
+// Sin filtro, con catálogos grandes, no tiene sentido armar TODAS las filas
+// de una: quedan sentadas en el DOM (ocultas, porque la pestaña Productos
+// arranca no-visible) y cuando tocás la pestaña, el navegador tiene que
+// pintarlas todas de golpe — eso es lo que se siente como "tarda en entrar".
+// Por eso, sin búsqueda, se arma solo un primer bloque y se ofrece cargar el
+// resto a pedido. Al buscar, el resultado filtrado ya es chico de por sí, así
+// que ahí sí se muestra completo sin límite.
+const LIMITE_FILAS_SIN_BUSQUEDA = 150;
+let mostrarCatalogoCompletoSinBusqueda = false;
+
+function filaHtml(producto) {
+    return `<tr data-codigo="${escapeHtml(producto.codigoArt)}">
+        <td>${escapeHtml(producto.articulo)}<span class="product-code">${escapeHtml(producto.codigoArt)}</span></td>
+        <td class="stock-cell">${escapeHtml(producto.stock_unidad)}</td>
+        <td class="action-cell"><button type="button" class="row-delete-btn" data-accion="eliminar-producto" title="Eliminar para siempre">✕</button></td>
+    </tr>`;
+}
+
 function renderTablaProductos() {
     const termino = normalizarTexto(productsSearchInput.value.trim());
 
@@ -1222,34 +1321,57 @@ function renderTablaProductos() {
         return;
     }
 
+    const ordenada = catalogoOrdenado();
     const lista = termino.length === 0
-        ? baseDeDatos
-        : baseDeDatos.filter(p =>
-            normalizarTexto(p.articulo).includes(termino) ||
-            normalizarTexto(p.codigoArt).includes(termino)
-        );
+        ? ordenada
+        : ordenada.filter(p => textoNormalizadoProducto(p).includes(termino));
 
     if (lista.length === 0) {
         productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">No se encontró ningún producto con ese criterio</td></tr>';
         return;
     }
 
-    const ordenada = [...lista].sort((a, b) => String(a.articulo || '').localeCompare(String(b.articulo || ''), 'es'));
+    const sinBusqueda = termino.length === 0;
+    const hayQueAcotar = sinBusqueda && !mostrarCatalogoCompletoSinBusqueda && lista.length > LIMITE_FILAS_SIN_BUSQUEDA;
+    const paraRenderizar = hayQueAcotar ? lista.slice(0, LIMITE_FILAS_SIN_BUSQUEDA) : lista;
 
-    productsTableBody.innerHTML = '';
-    ordenada.forEach(producto => {
-        const tr = document.createElement('tr');
-        tr.dataset.codigo = producto.codigoArt;
-        tr.innerHTML = `
-            <td>${producto.articulo}<span class="product-code">${producto.codigoArt}</span></td>
-            <td class="stock-cell">${producto.stock_unidad}</td>
-            <td class="action-cell"><button type="button" class="row-delete-btn" data-accion="eliminar-producto" title="Eliminar para siempre">✕</button></td>
-        `;
-        productsTableBody.appendChild(tr);
-    });
+    // Se arma el HTML completo como un solo string y se asigna una única vez
+    // (en vez de un createElement + appendChild por fila). Con miles de filas,
+    // un solo innerHTML es muchísimo más liviano para el navegador que miles
+    // de llamadas individuales al DOM — se nota sobre todo en Android.
+    let html = '';
+    for (const producto of paraRenderizar) {
+        html += filaHtml(producto);
+    }
+
+    if (hayQueAcotar) {
+        html += `<tr class="show-more-row"><td colspan="3">
+            <div class="show-more-inner">
+                <p class="show-more-text">Mostrando ${paraRenderizar.length} de ${lista.length} productos. Usá el buscador para encontrar uno puntual.</p>
+                <button type="button" id="mostrarTodosProductosBtn" class="btn btn--ghost">Mostrar todos</button>
+            </div>
+        </td></tr>`;
+    }
+
+    productsTableBody.innerHTML = html;
+
+    if (hayQueAcotar) {
+        document.getElementById('mostrarTodosProductosBtn').addEventListener('click', () => {
+            mostrarCatalogoCompletoSinBusqueda = true;
+            renderTablaProductos();
+        });
+    }
 }
 
-productsSearchInput.addEventListener('input', renderTablaProductos);
+const renderTablaProductosDebounced = debounce(renderTablaProductos, 180);
+
+productsSearchInput.addEventListener('input', function () {
+    // Si tipeás algo, volvemos al modo acotado por defecto para la próxima
+    // vez que se limpie la búsqueda — así "Mostrar todos" no queda pegado
+    // para siempre después de una búsqueda puntual.
+    mostrarCatalogoCompletoSinBusqueda = false;
+    renderTablaProductosDebounced();
+});
 
 productsTableBody.addEventListener('click', async function (e) {
     const fila = e.target.closest('tr[data-codigo]');
