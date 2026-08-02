@@ -441,6 +441,87 @@ body.modal-open {
     font-size: 13.5px;
 }
 
+/* Lista de productos (sección "Productos"): antes era una tabla, pero en
+   mobile obligaba a scroll horizontal y las filas eran chicas para tocar.
+   Se reemplaza por una lista de filas tipo card: nombre + código a la
+   izquierda, stock y borrar a la derecha. Mismo contenedor con scroll y
+   mismo id (productsTableBody) para no tocar la lógica de render en JS. */
+.products-list-wrap {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    max-height: 480px;
+    overflow-y: auto;
+}
+
+.products-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.product-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    transition: background .15s;
+}
+
+.product-row:last-child { border-bottom: 0; }
+.product-row:hover { background: var(--amber-soft); }
+
+.product-row-main { flex: 1; min-width: 0; }
+
+.product-row-name {
+    display: block;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 13.5px;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.product-row-code {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+}
+
+.product-row-stock {
+    flex-shrink: 0;
+    min-width: 34px;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--amber-dark);
+}
+
+.products-list .empty-row { cursor: default; }
+
+/* Fila "Mostrar todos" dentro de la lista de productos (versión div de
+   .show-more-row, que estaba pensada para <td>). */
+.show-more-card { padding: 22px 14px; cursor: default; }
+
+/* Filas "fantasma" con shimmer mientras se espera la primera respuesta de
+   Firestore (versión div de .skeleton-row, que estaba pensada para <td>). */
+.products-list .skeleton-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    border-bottom: 1px solid var(--line);
+    cursor: default;
+}
+.products-list .skeleton-row:hover { background: none; }
+.products-list .skeleton-row .skeleton-bar--wide { flex: 1; }
+
 /* Toasts */
 .toast-container {
     position: fixed;
@@ -451,7 +532,11 @@ body.modal-open {
     flex-direction: column;
     align-items: center;
     gap: 10px;
-    z-index: 300;
+    /* Los avisos deben verse siempre, aunque haya un modal, el login o el
+       boot loader abiertos encima. Por eso van con el z-index más alto de
+       toda la pila (ver .modal-overlay: 400, .login-overlay: 500,
+       #bootLoader: 900 más abajo en este archivo). */
+    z-index: 950;
     pointer-events: none;
 }
 
