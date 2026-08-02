@@ -381,6 +381,13 @@ onAuthChange(async function (user) {
         uidSesionInicializada = null;
         mostrarSaludoUsuario(null);
         resetEstadoApp();
+
+        // Al cerrar sesión, limpiamos el formulario de login: si no lo
+        // hacemos, el usuario y la contraseña de la sesión anterior quedan
+        // escritos en los inputs (se ven en pantalla) al volver a la
+        // pantalla de login.
+        loginForm.reset();
+        loginError.classList.remove('show');
     }
 });
 
@@ -486,7 +493,7 @@ function resetEstadoApp() {
     inventarioActual = null;
     document.getElementById('scannedTable').innerHTML = '<tr><td colspan="4" class="empty-row">No hay modificaciones recientes</td></tr>';
     productsSearchInput.value = '';
-    productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
+    productsTableBody.innerHTML = '<div class="empty-row">Subí el catálogo para ver los productos</div>';
     resetHistorial();
     deshabilitarEscaneo();
     actualizarEstadoDescarga();
@@ -523,7 +530,7 @@ function mostrarCargaInicial() {
 
     document.getElementById('catalogUploadPanel').style.display = '';
     document.getElementById('catalogStatus').style.display = 'none';
-    productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
+    productsTableBody.innerHTML = '<div class="empty-row">Subí el catálogo para ver los productos</div>';
 
     deshabilitarEscaneo();
     actualizarEstadoDescarga();
@@ -550,11 +557,10 @@ function renderSkeletonProductos() {
     let filas = '';
     for (let i = 0; i < 5; i++) {
         filas += `
-            <tr class="skeleton-row">
-                <td><div class="skeleton-bar skeleton-bar--wide"></div></td>
-                <td><div class="skeleton-bar skeleton-bar--narrow"></div></td>
-                <td></td>
-            </tr>`;
+            <div class="skeleton-row">
+                <div class="skeleton-bar skeleton-bar--wide"></div>
+                <div class="skeleton-bar skeleton-bar--narrow"></div>
+            </div>`;
     }
     productsTableBody.innerHTML = filas;
 }
@@ -1306,18 +1312,21 @@ const LIMITE_FILAS_SIN_BUSQUEDA = 150;
 let mostrarCatalogoCompletoSinBusqueda = false;
 
 function filaHtml(producto) {
-    return `<tr data-codigo="${escapeHtml(producto.codigoArt)}">
-        <td>${escapeHtml(producto.articulo)}<span class="product-code">${escapeHtml(producto.codigoArt)}</span></td>
-        <td class="stock-cell">${escapeHtml(producto.stock_unidad)}</td>
-        <td class="action-cell"><button type="button" class="row-delete-btn" data-accion="eliminar-producto" title="Eliminar para siempre">✕</button></td>
-    </tr>`;
+    return `<div class="product-row" data-codigo="${escapeHtml(producto.codigoArt)}">
+        <div class="product-row-main">
+            <span class="product-row-name">${escapeHtml(producto.articulo)}</span>
+            <span class="product-row-code">${escapeHtml(producto.codigoArt)}</span>
+        </div>
+        <div class="product-row-stock">${escapeHtml(producto.stock_unidad)}</div>
+        <button type="button" class="row-delete-btn" data-accion="eliminar-producto" title="Eliminar para siempre">✕</button>
+    </div>`;
 }
 
 function renderTablaProductos() {
     const termino = normalizarTexto(productsSearchInput.value.trim());
 
     if (baseDeDatos.length === 0) {
-        productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">Subí el catálogo para ver los productos</td></tr>';
+        productsTableBody.innerHTML = '<div class="empty-row">Subí el catálogo para ver los productos</div>';
         return;
     }
 
@@ -1327,7 +1336,7 @@ function renderTablaProductos() {
         : ordenada.filter(p => textoNormalizadoProducto(p).includes(termino));
 
     if (lista.length === 0) {
-        productsTableBody.innerHTML = '<tr><td colspan="3" class="empty-row">No se encontró ningún producto con ese criterio</td></tr>';
+        productsTableBody.innerHTML = '<div class="empty-row">No se encontró ningún producto con ese criterio</div>';
         return;
     }
 
@@ -1345,12 +1354,12 @@ function renderTablaProductos() {
     }
 
     if (hayQueAcotar) {
-        html += `<tr class="show-more-row"><td colspan="3">
+        html += `<div class="show-more-card">
             <div class="show-more-inner">
                 <p class="show-more-text">Mostrando ${paraRenderizar.length} de ${lista.length} productos. Usá el buscador para encontrar uno puntual.</p>
                 <button type="button" id="mostrarTodosProductosBtn" class="btn btn--ghost">Mostrar todos</button>
             </div>
-        </td></tr>`;
+        </div>`;
     }
 
     productsTableBody.innerHTML = html;
@@ -1374,7 +1383,7 @@ productsSearchInput.addEventListener('input', function () {
 });
 
 productsTableBody.addEventListener('click', async function (e) {
-    const fila = e.target.closest('tr[data-codigo]');
+    const fila = e.target.closest('.product-row[data-codigo]');
     if (!fila) return;
     const codigo = fila.dataset.codigo;
 
