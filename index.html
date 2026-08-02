@@ -135,6 +135,9 @@
                         <span class="user-chip__name" id="userChipName"></span>
                     </span>
                 </div>
+                <button class="icon-btn" id="guiaBtn" type="button" aria-label="Cómo usar Conteo+" title="Cómo usar Conteo+">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
                 <button class="icon-btn icon-btn--logout" id="logoutBtn" type="button" aria-label="Cerrar sesión" title="Cerrar sesión">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                 </button>
@@ -444,6 +447,31 @@
         <div class="modal-actions">
             <button class="btn btn--ghost btn--full" id="dangerModalCancel" type="button">Cancelar</button>
             <button class="btn btn--danger btn--full" id="dangerModalConfirm" type="button" disabled>Confirmar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Guía de uso: tutorial paso a paso, se puede abrir desde el botón (?)
+     del header, y también aparece sola la primera vez que alguien entra. -->
+<div class="modal-overlay" id="guiaModal">
+    <div class="modal modal--guia">
+        <button class="modal-close" id="guiaCerrarX" type="button" aria-label="Cerrar guía">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+
+        <span class="eyebrow">¿Cómo usar Conteo+?</span>
+        <span class="guia-paso-contador" id="guiaContador">Paso 1 de 6</span>
+
+        <div class="guia-icon" id="guiaIcono" aria-hidden="true"></div>
+
+        <h3 id="guiaTitulo"></h3>
+        <p class="guia-texto" id="guiaTexto"></p>
+
+        <div class="guia-dots" id="guiaDots"></div>
+
+        <div class="modal-actions">
+            <button class="btn btn--ghost" id="guiaAnterior" type="button">Anterior</button>
+            <button class="btn btn--amber" id="guiaSiguiente" type="button">Siguiente</button>
         </div>
     </div>
 </div>
