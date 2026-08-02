@@ -1302,7 +1302,13 @@ async function eliminarProductoDelCatalogo(codigo) {
 // -------------------------------
 let html5QrCode = null;
 let isScanning = false;
-let lastScan = { code: null, time: 0 };
+// Mientras hay un código recién detectado esperando resolución (el modal de
+// cantidad o de "producto nuevo" abierto), la cámara queda pausada y
+// cualquier lectura que llegue de todos modos se ignora. Sin esto, si el
+// código se lee mal en un frame de transición (por movimiento/reflejo) y
+// bien un instante después, se abrían DOS modales apilados: uno con la
+// lectura mala (el "no encontrado") y otro con la buena atrás.
+let escaneoBloqueado = false;
 
 const startCameraBtn = document.getElementById('startCameraBtn');
 const stopCameraBtn = document.getElementById('stopCameraBtn');
@@ -1376,6 +1382,7 @@ async function iniciarCamara() {
         );
 
         isScanning = true;
+        escaneoBloqueado = false;
         cameraWrap.classList.add('is-scanning');
         startCameraBtn.style.display = 'none';
         stopCameraBtn.style.display = '';
@@ -1397,18 +1404,36 @@ async function detenerCamara() {
         }
     }
     isScanning = false;
+    escaneoBloqueado = false;
     cameraWrap.classList.remove('is-scanning');
     startCameraBtn.style.display = '';
     stopCameraBtn.style.display = 'none';
 }
 
 function onScanSuccess(decodedText) {
-    const ahora = Date.now();
-    if (decodedText === lastScan.code && ahora - lastScan.time < 2500) return;
-    lastScan = { code: decodedText, time: ahora };
+    if (escaneoBloqueado) return;
+    escaneoBloqueado = true;
+
+    // pause(true) también congela el video (no solo el análisis de frames),
+    // así el usuario ve el frame donde se detectó el código y no una imagen
+    // en movimiento mientras decide qué hacer en el modal.
+    if (html5QrCode && isScanning) {
+        try { html5QrCode.pause(true); } catch (err) { console.error(err); }
+    }
 
     if (navigator.vibrate) navigator.vibrate(80);
     procesarEscaneo(decodedText);
+}
+
+// Se llama al cerrar el modal de cantidad o de "producto nuevo", sea cual
+// sea el motivo (confirmar, cancelar, eliminar, tocar afuera). Reanuda la
+// cámara solo si seguía prendida — si mientras tanto el usuario la apagó a
+// mano, no hay nada que reanudar.
+function desbloquearEscaneo() {
+    escaneoBloqueado = false;
+    if (html5QrCode && isScanning) {
+        try { html5QrCode.resume(); } catch (err) { console.error(err); }
+    }
 }
 
 // -------------------------------
@@ -1508,6 +1533,7 @@ function cerrarModalCantidad() {
     qtyModal.classList.remove('open');
     pendingProduct = null;
     modoModalCantidad = 'sumar';
+    desbloquearEscaneo();
     refocarInputEscaneo();
 }
 
@@ -1590,6 +1616,12 @@ function abrirModalProductoNuevo(codigo, descripcionPrellenada = '') {
         document.getElementById('npDescripcion').value = descripcionPrellenada;
         document.getElementById('npUnidades').value = 'unidad';
         document.getElementById('npStock').value = 1;
+
+        // El lápiz para corregir el código solo tiene sentido si vino de un
+        // escaneo (si es alta manual sin código, no hay nada que corregir).
+        document.getElementById('npCodigoEditarBtn').style.display = altaSinCodigo ? 'none' : '';
+        document.getElementById('npCodigoEditGroup').style.display = 'none';
+
         newProductModal.classList.add('open');
         setTimeout(() => document.getElementById('npDescripcion').focus(), 50);
     });
@@ -1599,12 +1631,68 @@ function cerrarModalProductoNuevo() {
     newProductModal.classList.remove('open');
     pendingScanCode = null;
     altaSinCodigo = false;
+    desbloquearEscaneo();
     refocarInputEscaneo();
 }
 
 document.getElementById('npCancel').addEventListener('click', cerrarModalProductoNuevo);
 newProductModal.addEventListener('click', (e) => {
     if (e.target === newProductModal) cerrarModalProductoNuevo();
+});
+
+const npCodigoEditGroup = document.getElementById('npCodigoEditGroup');
+const npCodigoInput = document.getElementById('npCodigoInput');
+
+// El lápiz funciona como toggle: si el editor está cerrado lo abre
+// (precargado con el código actual), si ya está abierto lo cierra sin
+// guardar nada (equivale a cancelar la corrección).
+document.getElementById('npCodigoEditarBtn').addEventListener('click', () => {
+    const abrir = npCodigoEditGroup.style.display === 'none';
+    if (abrir) {
+        npCodigoInput.value = pendingScanCode || '';
+        npCodigoEditGroup.style.display = '';
+        setTimeout(() => { npCodigoInput.focus(); npCodigoInput.select(); }, 30);
+    } else {
+        npCodigoEditGroup.style.display = 'none';
+    }
+});
+
+function guardarCorreccionCodigo() {
+    const nuevoCodigo = npCodigoInput.value.trim();
+    if (!nuevoCodigo) {
+        showToast('Ingresá un código válido.', 'error');
+        return;
+    }
+
+    npCodigoEditGroup.style.display = 'none';
+
+    if (nuevoCodigo === pendingScanCode) return; // no cambió nada
+
+    // Si el código corregido coincide con un producto que ya existe en el
+    // catálogo, no tiene sentido seguir armando un "producto nuevo": se
+    // cierra este modal y se sigue directo con el flujo normal de cantidad
+    // para ese producto — así el usuario no tiene que volver a escanear.
+    const productoExistente = baseDeDatos.find(p => p.codigoArt === nuevoCodigo);
+    if (productoExistente) {
+        cerrarModalProductoNuevo();
+        abrirModalCantidad(productoExistente);
+        showToast(`"${productoExistente.articulo}" ya existe con ese código — seguí con la cantidad.`, 'success');
+        return;
+    }
+
+    pendingScanCode = nuevoCodigo;
+    document.getElementById('npCodigo').textContent = nuevoCodigo;
+    showToast('Código corregido.', 'success');
+}
+
+document.getElementById('npCodigoGuardar').addEventListener('click', guardarCorreccionCodigo);
+npCodigoInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        guardarCorreccionCodigo();
+    } else if (e.key === 'Escape') {
+        npCodigoEditGroup.style.display = 'none';
+    }
 });
 
 // -------------------------------
